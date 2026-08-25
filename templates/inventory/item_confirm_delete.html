@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-inventory-delete">
+  <div class="container py-4">
+    <div class="row justify-content-center">
+      <div class="col-lg-6 col-md-8">
+        <h1 class="h3 mb-3">{% trans "Excluir item" %}</h1>
+
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <p class="mb-1">{% trans "Tem certeza que deseja excluir permanentemente o item abaixo?" %}</p>
+            <p class="fw-bold mb-3">{{ object.name|escape }}</p>
+            <dl class="row small mb-4">
+              <dt class="col-sm-4 text-muted">{% trans "Preço" %}</dt>
+              <dd class="col-sm-8">R$ {{ object.price|stringformat:".2f" }}</dd>
+              <dt class="col-sm-4 text-muted">{% trans "Estoque" %}</dt>
+              <dd class="col-sm-8">{{ object.stock }}</dd>
+              <dt class="col-sm-4 text-muted">{% trans "Ativo" %}</dt>
+              <dd class="col-sm-8">{% if object.is_active %}{% trans "sim" %}{% else %}{% trans "não" %}{% endif %}</dd>
+            </dl>
+
+            <form method="post">
+              {% csrf_token %}
+              <div class="d-flex justify-content-between">
+                <a href="{% url 'inventory:item-list' %}" class="btn btn-outline-secondary">{% trans "Cancelar" %}</a>
+                <button type="submit" class="btn btn-danger">{% trans "Excluir" %}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

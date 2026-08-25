@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-inventory-list">
+  <div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+      <h1 class="h3 mb-0">{% trans "Estoque" %}</h1>
+      <a href="{% url 'inventory:item-create' %}" class="btn btn-primary">
+        {% trans "Novo item" %}
+      </a>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show py-2" role="alert">
+          {{ message|escape }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">{% trans "Nome" %}</th>
+                <th scope="col" class="text-end">{% trans "Preço" %}</th>
+                <th scope="col" class="text-end">{% trans "Estoque" %}</th>
+                <th scope="col" class="text-center">{% trans "Ativo" %}</th>
+                <th scope="col" class="text-end">{% trans "Ações" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr class="{% if not item.is_active %}text-muted table-secondary{% endif %}">
+                  <td>
+                    {{ item.name|escape }}
+                    {% if not item.is_active %}
+                      <span class="badge bg-secondary ms-1">{% trans "inativo" %}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">R$ {{ item.price|stringformat:".2f" }}</td>
+                  <td class="text-end">{{ item.stock }}</td>
+                  <td class="text-center">
+                    {% if item.is_active %}
+                      <span class="badge bg-success">{% trans "sim" %}</span>
+                    {% else %}
+                      <span class="badge bg-secondary">{% trans "não" %}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end text-nowrap">
+                    <a href="{% url 'inventory:item-update' item.pk %}" class="btn btn-sm btn-outline-secondary">{% trans "Editar" %}</a>
+                    <a href="{% url 'inventory:item-delete' item.pk %}" class="btn btn-sm btn-outline-danger">{% trans "Excluir" %}</a>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="5" class="text-center text-muted py-4">
+                    {% trans "Nenhum item cadastrado. Clique em \"Novo item\" para começar." %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

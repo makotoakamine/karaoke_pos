@@ -13,6 +13,12 @@ A interface está em português brasileiro (pt-br).
   - `core/views.py` – `LandingLoginView` (envolve `LoginView`) em `/` e
     `HomeView` (stub autenticado) em `/home/`.
   - `core/urls.py` – `/` (login), `/home/` (home) e `/logout/`.
+- **`inventory/`** – app de catálogo de itens vendáveis (#107).
+  - `inventory/models.py` – `Item` (nome, preço, estoque, `is_active`).
+  - `inventory/views.py` – CRUD de itens (login required) via class-based views.
+  - `inventory/urls.py` – `/estoque/` (lista), `/estoque/novo/` (criar),
+    `/estoque/<pk>/editar/` (editar) e `/estoque/<pk>/excluir/` (excluir).
+  - `inventory/admin.py` – registra `Item` no admin do Django como fallback.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
