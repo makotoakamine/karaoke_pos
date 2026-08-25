@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-tables-list">
+  <div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+      <h1 class="h3 mb-0">{% trans "Mesas" %}</h1>
+      <a href="{% url 'tables:table-create' %}" class="btn btn-primary">
+        {% trans "Nova mesa" %}
+      </a>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show py-2" role="alert">
+          {{ message|escape }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">{% trans "Nome" %}</th>
+                <th scope="col" class="text-end">{% trans "Lugares" %}</th>
+                <th scope="col" class="text-center">{% trans "Status" %}</th>
+                <th scope="col" class="text-end">{% trans "Ações" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for table in tables %}
+                <tr>
+                  <td>{{ table.name|escape }}</td>
+                  <td class="text-end">{{ table.seats }}</td>
+                  <td class="text-center">
+                    {% if table.status == 'free' %}
+                      <span class="badge bg-success">{% trans "Livre" %}</span>
+                    {% else %}
+                      <span class="badge bg-danger">{% trans "Ocupada" %}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end text-nowrap">
+                    <form method="post" action="{% url 'tables:table-list' %}" class="d-inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="table_id" value="{{ table.pk }}">
+                      {% if table.status == 'free' %}
+                        <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Marcar ocupada" %}</button>
+                      {% else %}
+                        <button type="submit" class="btn btn-sm btn-outline-success">{% trans "Marcar livre" %}</button>
+                      {% endif %}
+                    </form>
+                    <a href="{% url 'tables:table-update' table.pk %}" class="btn btn-sm btn-outline-secondary">{% trans "Editar" %}</a>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="4" class="text-center text-muted py-4">
+                    {% trans "Nenhuma mesa ativa. Clique em \"Nova mesa\" para começar." %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
