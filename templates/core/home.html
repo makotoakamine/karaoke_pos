@@ -10,6 +10,7 @@
       <h1 class="h2 mb-3">{% trans "Bem-vindo(a)" %}, {{ request.user.get_username }}!</h1>
       <p class="lead">{% trans "Página inicial do Karaokê POS — o painel de navegação crescerá aqui nas próximas tarefas." %}</p>
       <hr class="my-4">
+      <a href="{% url 'tables:table-list' %}" class="btn btn-primary me-2">{% trans "Mesas" %}</a>
       <form method="post" action="{% url 'core:logout' %}" class="d-inline-block">
         {% csrf_token %}
         <button type="submit" class="btn btn-outline-secondary">{% trans "Sair" %}</button>

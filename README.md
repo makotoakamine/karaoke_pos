@@ -13,6 +13,14 @@ A interface está em português brasileiro (pt-br).
   - `core/views.py` – `LandingLoginView` (envolve `LoginView`) em `/` e
     `HomeView` (stub autenticado) em `/home/`.
   - `core/urls.py` – `/` (login), `/home/` (home) e `/logout/`.
+- **`tables/`** – app de gestão de mesas (#108).
+  - `tables/models.py` – `Table` (nome/número único, lugares, status
+    livre/ocupada, `is_active`).
+  - `tables/views.py` – lista/visão geral com toggle manual de status +
+    criar/editar (login required) via class-based views.
+  - `tables/urls.py` – `/mesas/` (lista), `/mesas/nova/` (criar) e
+    `/mesas/<pk>/editar/` (editar).
+  - `tables/admin.py` – registra `Table` no admin do Django como fallback.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
