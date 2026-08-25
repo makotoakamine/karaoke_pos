@@ -78,3 +78,11 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Authentication
+# The site root URL ("/") doubles as the branded landing/login page, so
+# unauthenticated visitors of any protected page are redirected there.
+# A successful login lands on the logged-in home page stub.
+LOGIN_URL = "core:login"
+LOGIN_REDIRECT_URL = "core:home"
+LOGOUT_REDIRECT_URL = "core:login"

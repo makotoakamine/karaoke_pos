@@ -13,7 +13,7 @@
   <header>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
       <div class="container">
-        <a class="navbar-brand fw-bold" href="{% url 'core:index' %}">Karaokê POS</a>
+        <a class="navbar-brand fw-bold" href="{% url 'core:login' %}">Karaokê POS</a>
         <button class="navbar-toggler" type="button"
                 data-bs-toggle="collapse" data-bs-target="#mainNavbar"
                 aria-controls="mainNavbar" aria-expanded="false"
@@ -23,9 +23,21 @@
         <div class="collapse navbar-collapse" id="mainNavbar">
           <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
             {% block navbar_links %}
+            {% if user.is_authenticated %}
             <li class="nav-item">
-              <a class="nav-link active" aria-current="page" href="{% url 'core:index' %}">Início</a>
+              <a class="nav-link active" aria-current="page" href="{% url 'core:home' %}">Início</a>
             </li>
+            <li class="nav-item">
+              <form method="post" action="{% url 'core:logout' %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-link nav-link p-0 ms-lg-2">Sair</button>
+              </form>
+            </li>
+            {% else %}
+            <li class="nav-item">
+              <a class="nav-link active" aria-current="page" href="{% url 'core:login' %}">Entrar</a>
+            </li>
+            {% endif %}
             {% endblock %}
           </ul>
         </div>

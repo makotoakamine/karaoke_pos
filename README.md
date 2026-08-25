@@ -9,11 +9,18 @@ A interface está em português brasileiro (pt-br).
 
 - **`config/`** – módulo de configurações do Django (`config.settings.dev`).
   - `config/urls.py` – URLs raiz, inclui `core.urls` em `/`.
-- **`core/`** – app inicial com a view da página inicial.
+- **`core/`** – app inicial com a página de landing/login e a home autenticada.
+  - `core/views.py` – `LandingLoginView` (envolve `LoginView`) em `/` e
+    `HomeView` (stub autenticado) em `/home/`.
+  - `core/urls.py` – `/` (login), `/home/` (home) e `/logout/`.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
-  o bundle JS do Bootstrap servido localmente.
-- **`templates/core/index.html`** – página inicial que estende `base.html`.
+  o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
+  visitantes deslogados e "Início/Sair" para autenticados.
+- **`templates/core/landing.html`** – landing page com a marca do restaurante e
+  o formulário de login (username/senha) estilizado pelo Bootstrap.
+- **`templates/core/home.html`** – home autenticada (stub) que futuros painéis
+  vão ampliar.
 - **`static/scss/main.scss`** – ponto de entrada do Sass; sobrescreve
   variáveis do Bootstrap **antes** de importá-lo, permitindo customização do tema.
 - **`static/css/main.css`** – CSS compilado (gerado, ignorado pelo git).
@@ -50,13 +57,30 @@ npm run build:js
 # 5. Aplicar as migrações do banco de dados (SQLite)
 .venv/bin/python manage.py migrate
 
-# 6. Rodar o servidor de desenvolvimento
+# 6. Criar a conta de administrador (único login do sistema por enquanto)
+.venv/bin/python manage.py createsuperuser
+
+# 7. Rodar o servidor de desenvolvimento
 .venv/bin/python manage.py runserver
 ```
 
-Abra <http://127.0.0.1:8000/> no navegador. A página inicial deve carregar
-estilizada pelo Bootstrap compilado localmente, com a barra de navegação roxa
-no topo.
+Abra <http://127.0.0.1:8000/> no navegador. A página de landing/login deve
+carregar estilizada pelo Bootstrap compilado localmente, com a barra de
+navegação roxa no topo e o formulário de acesso centralizado.
+
+## Conta de administrador
+
+Por enquanto há um único tipo de usuário — o administrador — criado via
+`createsuperuser`. Não há tela de cadastro, recuperação de senha ou gestão de
+usuários; papéis e permissões por usuário ficam fora do escopo deste estágio.
+
+```bash
+.venv/bin/python manage.py createsuperuser
+```
+
+Informe nome de usuário, e-mail (opcional) e senha quando solicitado. Esse
+usuário é o que consegue entrar pela landing page em `/` e chegar à página
+inicial autenticada em `/home/`.
 
 ## Desenvolvendo o estilo
 

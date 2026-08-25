@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; {% trans "Entrar" %}{% endblock %}
+
+{% block content %}
+<section class="karaoke-landing">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-5 col-md-7 col-sm-10">
+        <div class="text-center mb-4">
+          <h1 class="karaoke-brand">Karaokê POS</h1>
+          <p class="lead text-muted">Karaokê em família &middot; sistema de ponto de venda</p>
+        </div>
+
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <h2 class="h4 card-title text-center mb-3">{% trans "Acesso do administrador" %}</h2>
+
+            {% if form.non_field_errors %}
+              <div class="alert alert-danger py-2 mb-3" role="alert">
+                {% for error in form.non_field_errors %}{{ error|escape }}{% endfor %}
+              </div>
+            {% endif %}
+
+            <form method="post" novalidate>
+              {% csrf_token %}
+
+              <div class="mb-3">
+                <label for="id_username" class="form-label">{{ form.username.label_tag|striptags }}</label>
+                <input type="text" name="username" id="id_username"
+                       class="form-control{% if form.username.errors %} is-invalid{% endif %}"
+                       autocomplete="username" maxlength="150" required autofocus>
+                {% for error in form.username.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
+              </div>
+
+              <div class="mb-3">
+                <label for="id_password" class="form-label">{{ form.password.label_tag|striptags }}</label>
+                <input type="password" name="password" id="id_password"
+                       class="form-control{% if form.password.errors %} is-invalid{% endif %}"
+                       autocomplete="current-password" required>
+                {% for error in form.password.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
+              </div>
+
+              <input type="hidden" name="next" value="{{ next }}">
+
+              <div class="d-grid">
+                <button type="submit" class="btn btn-primary btn-lg">{% trans "Entrar" %}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <p class="text-center text-muted small mt-3">
+          {% trans "Acesso restrito ao administrador." %}
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
