@@ -27,10 +27,24 @@ A interface está em português brasileiro (pt-br).
   - `tables/urls.py` – `/mesas/` (lista), `/mesas/nova/` (criar) e
     `/mesas/<pk>/editar/` (editar).
   - `tables/admin.py` – registra `Table` no admin do Django como fallback.
+- **`orders/`** – app de pedidos (#109).
+  - `orders/models.py` – `Order` (FK para `tables.Table`, status
+    aberta/encerrada, `created_at`) e `OrderItem` (FK para o pedido, FK para
+    `inventory.Item`, `quantity`, `unit_price` com snapshot do preço no
+    momento do pedido).
+  - `orders/views.py` – página de abertura de pedido (login required) com
+    seleção de mesa + formset de itens; o POST roda numa transação única,
+    valida o estoque de cada linha contra o estoque atual, decrementa o
+    estoque, cria o pedido com seus itens e marca a mesa como ocupada. Se
+    qualquer linha excede o estoque, toda a submissão é rejeitada e nada
+    muda.
+  - `orders/urls.py` – `/pedidos/novo/` (abrir pedido).
+  - `orders/admin.py` – registra `Order` e `OrderItem` no admin do Django
+    como fallback.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
-  visitantes deslogados e "Início/Sair" para autenticados.
+  visitantes deslogados e "Início/Mesas/Pedidos/Estoque/Sair" para autenticados.
 - **`templates/core/landing.html`** – landing page com a marca do restaurante e
   o formulário de login (username/senha) estilizado pelo Bootstrap.
 - **`templates/core/home.html`** – home autenticada (stub) que futuros painéis

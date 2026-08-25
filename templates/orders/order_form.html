@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-order-form">
+  <div class="container py-4">
+    <div class="row justify-content-center">
+      <div class="col-lg-9 col-md-10">
+        <h1 class="h3 mb-3">{{ title }}</h1>
+
+        {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show py-2" role="alert">
+              {{ message|escape }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <form method="post" novalidate>
+              {% csrf_token %}
+
+              {# Top-level submission errors raised by the view (e.g. oversell). #}
+              {% if form_errors %}
+                <div class="alert alert-danger py-2" role="alert">
+                  {% for error in form_errors %}{{ error|escape }}{% endfor %}
+                </div>
+              {% endif %}
+
+              {# Table selector #}
+              <fieldset class="mb-4">
+                <legend class="h6 mb-3">{% trans "Mesa" %}</legend>
+
+                {% if order_form.non_field_errors %}
+                  <div class="alert alert-danger py-2" role="alert">
+                    {% for error in order_form.non_field_errors %}{{ error|escape }}{% endfor %}
+                  </div>
+                {% endif %}
+
+                <div class="mb-3">
+                  <label for="id_table" class="form-label">{{ order_form.table.label }}</label>
+                  {{ order_form.table }}
+                  {% for error in order_form.table.errors %}
+                    <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                  {% endfor %}
+                </div>
+              </fieldset>
+
+              {# Item lines #}
+              <fieldset>
+                <legend class="h6 mb-3">{% trans "Itens" %}</legend>
+
+                {{ formset.management_form }}
+
+                {% if formset.non_form_errors %}
+                  <div class="alert alert-danger py-2" role="alert">
+                    {% for error in formset.non_form_errors %}{{ error|escape }}{% endfor %}
+                  </div>
+                {% endif %}
+
+                <div class="table-responsive">
+                  <table class="table table-borderless align-middle mb-2" id="order-lines">
+                    <thead class="visually-hidden">
+                      <tr>
+                        <th>{% trans "Item" %}</th>
+                        <th class="w-25">{% trans "Quantidade" %}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for line in formset.forms %}
+                        <tr class="order-line">
+                          <td>
+                            {{ line.item }}
+                            {% for error in line.item.errors %}
+                              <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                            {% endfor %}
+                          </td>
+                          <td>
+                            {{ line.quantity }}
+                            {% for error in line.quantity.errors %}
+                              <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                            {% endfor %}
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        id="add-order-line">{% trans "Adicionar item" %}</button>
+              </fieldset>
+
+              <div class="d-flex justify-content-between mt-4">
+                <a href="{% url 'core:home' %}" class="btn btn-outline-secondary">{% trans "Cancelar" %}</a>
+                <button type="submit" class="btn btn-primary">{% trans "Registrar pedido" %}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{# Minimal client-side helper to clone the last line for adding more rows
+   without a round-trip — purely a UX convenience, the server still owns the
+   truth via the formset management form. #}
+<script>
+(function () {
+  var btn = document.getElementById("add-order-line");
+  if (!btn) return;
+  var tableBody = document.querySelector("#order-lines tbody");
+  var totalInput = document.getElementById("id_lines-TOTAL_FORMS");
+  btn.addEventListener("click", function () {
+    var lastRow = tableBody.lastElementChild;
+    if (!lastRow) return;
+    var clone = lastRow.cloneNode(true);
+    var currentTotal = parseInt(totalInput.value, 10) || 0;
+    var newIndex = currentTotal;
+    var oldPrefix = "lines-" + (newIndex - 1);
+    var newPrefix = "lines-" + newIndex;
+    clone.innerHTML = clone.innerHTML.replace(
+      new RegExp(oldPrefix, "g"),
+      newPrefix
+    );
+    clone.querySelectorAll("input, select").forEach(function (el) {
+      if (el.tagName === "SELECT") {
+        el.selectedIndex = 0;
+      } else if (el.type === "number") {
+        el.value = "";
+      }
+    });
+    tableBody.appendChild(clone);
+    totalInput.value = currentTotal + 1;
+  });
+})();
+</script>
+{% endblock %}
