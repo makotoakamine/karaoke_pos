@@ -1,0 +1,19 @@
+{
+  "name": "karaoke-pos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Karaoke POS - frontend assets (Bootstrap 5.3 + Sass)",
+  "scripts": {
+    "build:css": "sass static/scss/main.scss static/css/main.css --no-source-map --style=expanded",
+    "watch:css": "sass --watch static/scss/main.scss static/css/main.css --no-source-map --style=expanded",
+    "build:js": "node scripts/copy-bootstrap-js.js",
+    "build": "npm run build:css && npm run build:js"
+  },
+  "dependencies": {
+    "@popperjs/core": "^2.11.8",
+    "bootstrap": "^5.3.3"
+  },
+  "devDependencies": {
+    "sass": "^1.83.0"
+  }
+}

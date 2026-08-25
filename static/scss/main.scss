@@ -1,0 +1,53 @@
+// Karaoke POS - main stylesheet
+// Bootstrap 5.3 is installed via npm and compiled from Sass so the theme can be
+// customized by overriding variables before importing Bootstrap.
+
+// ---------------------------------------------------------------------------
+// Bootstrap variable overrides
+// ---------------------------------------------------------------------------
+// Customize Bootstrap here. Changing any of these values and re-running
+// `npm run build:css` will visibly change the rendered page.
+
+// Primary brand color (override Bootstrap's default $primary).
+$primary: #6f42c1; // roxo - identidade visual do Karaokê POS
+
+// Slightly rounded corners for a softer, modern look.
+$border-radius: 0.5rem;
+$border-radius-sm: 0.375rem;
+$border-radius-lg: 0.75rem;
+
+// Use the system font stack instead of Bootstrap's default web font.
+$font-family-sans-serif: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+// Navbar styling overrides.
+$navbar-brand-font-size: 1.25rem;
+$navbar-padding-y: 0.75rem;
+
+// ---------------------------------------------------------------------------
+// Import Bootstrap from node_modules
+// ---------------------------------------------------------------------------
+// Import the full Bootstrap stylesheet. Only the variables above need to be
+// defined before this import for them to take effect.
+@import "../../node_modules/bootstrap/scss/bootstrap";
+
+// ---------------------------------------------------------------------------
+// Project-specific styles
+// ---------------------------------------------------------------------------
+body {
+  background-color: #f8f9fa;
+}
+
+.karaoke-hero {
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.karaoke-hero h1 {
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: $primary;
+}
+
+.karaoke-hero p.lead {
+  color: #495057;
+}
