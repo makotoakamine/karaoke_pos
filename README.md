@@ -37,14 +37,25 @@ A interface está em português brasileiro (pt-br).
     valida o estoque de cada linha contra o estoque atual, decrementa o
     estoque, cria o pedido com seus itens e marca a mesa como ocupada. Se
     qualquer linha excede o estoque, toda a submissão é rejeitada e nada
-    muda.
-  - `orders/urls.py` – `/pedidos/novo/` (abrir pedido).
+    muda. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
+    que lista todos os pedidos abertos, do mais antigo ao mais recente, em
+    cards grandes do Bootstrap; um endpoint de polling em
+    `/pedidos/cozinha/fila/` devolve só o fragmento dos cards e um pequeno
+    JavaScript no template troca o conteúdo a cada ~5 segundos, sem
+    websockets nem framework JS. O botão "Pronto" em cada pedido faz POST
+    (com CSRF) para `/pedidos/cozinha/<pk>/pronto/` e muda o status para
+    "encerrada"; pedidos encerrados nunca aparecem na tela. A ocupação das
+    mesas não é tocada aqui.
+  - `orders/urls.py` – `/pedidos/novo/` (abrir pedido), `/pedidos/cozinha/`
+    (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards) e
+    `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto).
   - `orders/admin.py` – registra `Order` e `OrderItem` no admin do Django
     como fallback.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
-  visitantes deslogados e "Início/Mesas/Pedidos/Estoque/Sair" para autenticados.
+  visitantes deslogados e "Início/Mesas/Pedidos/Cozinha/Estoque/Sair" para
+  autenticados.
 - **`templates/core/landing.html`** – landing page com a marca do restaurante e
   o formulário de login (username/senha) estilizado pelo Bootstrap.
 - **`templates/core/home.html`** – home autenticada (stub) que futuros painéis

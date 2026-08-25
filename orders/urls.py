@@ -7,4 +7,11 @@ app_name = "orders"
 
 urlpatterns = [
     path("novo/", views.OrderCreateView.as_view(), name="order-create"),
+    path("cozinha/", views.KitchenView.as_view(), name="kitchen"),
+    path("cozinha/fila/", views.KitchenQueueView.as_view(), name="kitchen-queue"),
+    path(
+        "cozinha/<int:pk>/pronto/",
+        views.OrderDoneView.as_view(),
+        name="order-done",
+    ),
 ]

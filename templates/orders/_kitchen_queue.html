@@ -1,0 +1,42 @@
+{% load i18n %}
+{% if orders %}
+  <div class="row g-3" id="kitchen-queue-grid">
+    {% for order in orders %}
+      <div class="col-12 col-md-6 col-xl-4" data-order-pk="{{ order.pk }}">
+        <div class="card shadow-sm h-100 border-primary kitchen-card">
+          <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <span class="fw-bold fs-4">{{ order.table.name|escape }}</span>
+            <span class="badge bg-light text-dark fs-6">#{{ order.pk }}</span>
+          </div>
+          <div class="card-body">
+            <p class="card-text text-muted small mb-2">
+              {% blocktrans with elapsed=order.created_at|timesince %}há {{ elapsed }}{% endblocktrans %}
+              <span class="text-muted">&middot;</span>
+              <span>{{ order.created_at|date:"H:i" }}</span>
+            </p>
+            <ul class="list-group list-group-flush fs-4">
+              {% for line in order.items.all %}
+                <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                  <span class="fw-semibold">{{ line.item.name|escape }}</span>
+                  <span class="badge bg-secondary fs-5">{{ line.quantity }}x</span>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div class="card-footer text-end">
+            <form method="post" action="{% url 'orders:order-done' order.pk %}" class="d-inline">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-success btn-lg px-4">
+                {% trans "Pronto" %}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="text-center text-muted py-5" id="kitchen-queue-empty">
+    <p class="display-6">{% trans "Sem pedidos abertos no momento." %}</p>
+  </div>
+{% endif %}

@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from inventory.models import Item
 from orders.models import Order, OrderItem
@@ -280,3 +281,209 @@ class OrderModelTests(TestCase):
         self.item.save()
         line = OrderItem.objects.get()
         self.assertEqual(line.unit_price, Decimal("6.00"))
+
+
+class KitchenViewTests(TestCase):
+    """Acceptance tests for the kitchen screen and its polling endpoint."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.table_a = Table.objects.create(name="Mesa 1", seats=4)
+        cls.table_b = Table.objects.create(name="Mesa 2", seats=2)
+        cls.item = Item.objects.create(
+            name="Cerveja", price=Decimal("8.50"), stock=20
+        )
+        cls.item2 = Item.objects.create(
+            name="Porção", price=Decimal("25.00"), stock=10
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _make_order(self, table, lines, status=Order.Status.OPEN, created_at=None):
+        order = Order.objects.create(table=table, status=status)
+        if created_at is not None:
+            Order.objects.filter(pk=order.pk).update(created_at=created_at)
+        for item, qty in lines:
+            OrderItem.objects.create(
+                order=order, item=item, quantity=qty, unit_price=item.price
+            )
+        return order
+
+    # --- acceptance: login required ----------------------------------------
+
+    def test_anonymous_kitchen_redirected_to_login(self):
+        self.client.logout()
+        resp = self.client.get(reverse("orders:kitchen"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("next=", resp["Location"])
+
+    def test_anonymous_polling_endpoint_redirected_to_login(self):
+        self.client.logout()
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("next=", resp["Location"])
+
+    def test_anonymous_done_post_redirected_to_login(self):
+        self.client.logout()
+        order = self._make_order(self.table_a, [(self.item, 1)])
+        resp = self.client.post(reverse("orders:order-done", args=[order.pk]))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("next=", resp["Location"])
+        # state must not change for anonymous users
+        order.refresh_from_db()
+        self.assertEqual(order.status, "open")
+
+    # --- acceptance: open orders oldest-first -----------------------------
+
+    def test_kitchen_lists_open_orders_oldest_first(self):
+        older = self._make_order(
+            self.table_a, [(self.item, 2)], created_at=timezone.now() - timezone.timedelta(minutes=10)
+        )
+        newer = self._make_order(
+            self.table_b, [(self.item2, 1)], created_at=timezone.now() - timezone.timedelta(minutes=1)
+        )
+        resp = self.client.get(reverse("orders:kitchen"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        # older order appears before newer order in the response body
+        self.assertLess(body.index(f"#{older.pk}"), body.index(f"#{newer.pk}"))
+
+    def test_kitchen_shows_table_time_and_line_items_with_quantities(self):
+        order = self._make_order(
+            self.table_a, [(self.item, 3), (self.item2, 1)]
+        )
+        resp = self.client.get(reverse("orders:kitchen"))
+        self.assertContains(resp, self.table_a.name)
+        self.assertContains(resp, "Cerveja")
+        self.assertContains(resp, "3x")
+        self.assertContains(resp, "Porção")
+        self.assertContains(resp, "1x")
+        # the placed time is rendered (HH:MM) in the project's local tz
+        self.assertContains(
+            resp, timezone.localtime(order.created_at).strftime("%H:%M")
+        )
+
+    def test_done_orders_are_not_listed(self):
+        done = self._make_order(
+            self.table_a, [(self.item, 1)], status=Order.Status.DONE
+        )
+        open_order = self._make_order(self.table_b, [(self.item, 1)])
+        resp = self.client.get(reverse("orders:kitchen"))
+        body = resp.content.decode()
+        self.assertNotIn(f"#{done.pk}", body)
+        self.assertIn(f"#{open_order.pk}", body)
+
+    # --- acceptance: polling endpoint returns open orders only ------------
+
+    def test_polling_endpoint_returns_open_orders_fragment(self):
+        older = self._make_order(
+            self.table_a, [(self.item, 2)], created_at=timezone.now() - timezone.timedelta(minutes=5)
+        )
+        newer = self._make_order(
+            self.table_b, [(self.item2, 1)], created_at=timezone.now()
+        )
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        # both open orders present, oldest first
+        self.assertLess(body.index(f"#{older.pk}"), body.index(f"#{newer.pk}"))
+        # contains the Done button form pointing at the right endpoint
+        self.assertIn(
+            reverse("orders:order-done", args=[older.pk]), body
+        )
+
+    def test_polling_endpoint_excludes_done_orders(self):
+        done = self._make_order(
+            self.table_a, [(self.item, 1)], status=Order.Status.DONE
+        )
+        open_order = self._make_order(self.table_b, [(self.item, 1)])
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        body = resp.content.decode()
+        self.assertNotIn(f"#{done.pk}", body)
+        self.assertIn(f"#{open_order.pk}", body)
+
+    def test_polling_endpoint_empty_state(self):
+        # no open orders -> empty-state markup
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        self.assertContains(resp, "Sem pedidos abertos")
+
+    # --- acceptance: Done flips status and order disappears ---------------
+
+    def test_done_post_flips_status_to_done(self):
+        order = self._make_order(self.table_a, [(self.item, 1)])
+        resp = self.client.post(reverse("orders:order-done", args=[order.pk]))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"], reverse("orders:kitchen"))
+        order.refresh_from_db()
+        self.assertEqual(order.status, "done")
+
+    def test_done_order_disappears_from_kitchen_after_post(self):
+        order = self._make_order(self.table_a, [(self.item, 1)])
+        self.client.post(reverse("orders:order-done", args=[order.pk]))
+        resp = self.client.get(reverse("orders:kitchen"))
+        body = resp.content.decode()
+        self.assertNotIn(f"#{order.pk}", body)
+
+    def test_done_order_does_not_reappear_on_later_polls(self):
+        order = self._make_order(self.table_a, [(self.item, 1)])
+        self.client.post(reverse("orders:order-done", args=[order.pk]))
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        body = resp.content.decode()
+        self.assertNotIn(f"#{order.pk}", body)
+
+    def test_done_post_on_already_done_order_is_idempotent(self):
+        order = self._make_order(
+            self.table_a, [(self.item, 1)], status=Order.Status.DONE
+        )
+        resp = self.client.post(reverse("orders:order-done", args=[order.pk]))
+        self.assertEqual(resp.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, "done")
+
+    def test_done_post_on_unknown_order_returns_404(self):
+        resp = self.client.post(reverse("orders:order-done", args=[999999]))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_done_does_not_touch_table_occupancy(self):
+        # kitchen Done must not free the table (out of scope for this task)
+        self.table_a.status = Table.Status.OCCUPIED
+        self.table_a.save(update_fields=["status"])
+        order = self._make_order(self.table_a, [(self.item, 1)])
+        self.client.post(reverse("orders:order-done", args=[order.pk]))
+        self.table_a.refresh_from_db()
+        self.assertEqual(self.table_a.status, "occupied")
+
+    # --- acceptance: page extends base.html and uses Bootstrap ------------
+
+    def test_kitchen_page_extends_base_html(self):
+        resp = self.client.get(reverse("orders:kitchen"))
+        self.assertTemplateUsed(resp, "base.html")
+        self.assertTemplateUsed(resp, "orders/kitchen.html")
+
+    def test_kitchen_page_renders_bootstrap_cards(self):
+        self._make_order(self.table_a, [(self.item, 1)])
+        resp = self.client.get(reverse("orders:kitchen"))
+        body = resp.content.decode()
+        self.assertIn("card", body)
+        self.assertIn("btn-success", body)
+        self.assertIn("container", body)
+
+    def test_kitchen_page_contains_polling_script(self):
+        resp = self.client.get(reverse("orders:kitchen"))
+        body = resp.content.decode()
+        self.assertIn(reverse("orders:kitchen-queue"), body)
+        self.assertIn("setInterval", body)
+
+    # --- navigation --------------------------------------------------------
+
+    def test_navbar_links_to_kitchen(self):
+        resp = self.client.get(reverse("core:home"))
+        self.assertContains(resp, reverse("orders:kitchen"))
+
+    def test_home_links_to_kitchen(self):
+        resp = self.client.get(reverse("core:home"))
+        self.assertContains(resp, reverse("orders:kitchen"))

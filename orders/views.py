@@ -14,8 +14,9 @@ from typing import Iterable, Tuple
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
-from django.shortcuts import redirect, render
-from django.urls import reverse_lazy
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse, reverse_lazy
 from django.utils.translation import gettext as _
 from django.views.generic import View
 
@@ -153,3 +154,76 @@ class OrderCreateView(LoginRequiredMixin, View):
             ),
         )
         return redirect(reverse_lazy("orders:order-create"))
+
+
+def _open_orders_queryset():
+    """Open orders, oldest first, with their table and items prefetched.
+
+    The kitchen screen works top-down so the oldest ticket is always at the
+    top of the pile. Prefetching the items and the item's name keeps the
+    polling endpoint to a single query per refresh.
+    """
+    return (
+        Order.objects.filter(status=Order.Status.OPEN)
+        .select_related("table")
+        .prefetch_related("items__item")
+        .order_by("created_at")
+    )
+
+
+class KitchenView(LoginRequiredMixin, View):
+    """Kitchen-facing screen listing every open order oldest-first.
+
+    The page renders the full grid of open orders as large Bootstrap cards.
+    A companion polling endpoint (:class:`KitchenQueueView`) returns just the
+    cards fragment so a small piece of plain JavaScript can swap it in every
+    few seconds without a full reload.
+    """
+
+    template_name = "orders/kitchen.html"
+    extra_context = {"title": "Cozinha"}
+
+    def get(self, request, *args, **kwargs):
+        orders = list(_open_orders_queryset())
+        context = {
+            "title": self.extra_context["title"],
+            "orders": orders,
+        }
+        return render(request, self.template_name, context)
+
+
+class KitchenQueueView(LoginRequiredMixin, View):
+    """Polling endpoint that returns the rendered cards fragment.
+
+    Returns an HTML fragment (the ``orders/_kitchen_queue.html`` partial)
+    so the kitchen page's JavaScript can simply swap ``innerHTML`` of the
+    grid container with the response body. No JSON, no JS framework.
+    """
+
+    template_name = "orders/_kitchen_queue.html"
+
+    def get(self, request, *args, **kwargs):
+        orders = list(_open_orders_queryset())
+        return render(
+            request,
+            self.template_name,
+            {"orders": orders},
+        )
+
+
+class OrderDoneView(LoginRequiredMixin, View):
+    """Flip a single order's status from ``open`` to ``done``.
+
+    Reached from the ``Done`` button on each kitchen card. Only the
+    ``status`` field is updated; the table's occupancy is intentionally left
+    alone (freeing tables is out of scope for this task). Unknown or already
+    done orders are treated as gone and silently redirect back to the screen
+    so a stale poll cannot raise a 404 in the kitchen's face.
+    """
+
+    def post(self, request, pk, *args, **kwargs):
+        order = get_object_or_404(Order, pk=pk)
+        if order.status == Order.Status.OPEN:
+            order.status = Order.Status.DONE
+            order.save(update_fields=["status", "updated_at"])
+        return redirect(reverse("orders:kitchen"))

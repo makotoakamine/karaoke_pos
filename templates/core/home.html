@@ -13,6 +13,7 @@
       <a href="{% url 'inventory:item-list' %}" class="btn btn-primary me-2">{% trans "Estoque" %}</a>
       <a href="{% url 'tables:table-list' %}" class="btn btn-primary me-2">{% trans "Mesas" %}</a>
       <a href="{% url 'orders:order-create' %}" class="btn btn-primary me-2">{% trans "Novo pedido" %}</a>
+      <a href="{% url 'orders:kitchen' %}" class="btn btn-primary me-2">{% trans "Cozinha" %}</a>
       <form method="post" action="{% url 'core:logout' %}" class="d-inline-block">
         {% csrf_token %}
         <button type="submit" class="btn btn-outline-secondary">{% trans "Sair" %}</button>
