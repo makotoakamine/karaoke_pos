@@ -1,0 +1,30 @@
+# Python / Django
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# SQLite dev database
+db.sqlite3
+db.sqlite3-journal
+
+# Django collected static (generated at deploy time)
+staticfiles/
+
+# Compiled CSS from the Sass pipeline (regenerate with `npm run build:css`)
+static/css/main.css
+static/css/main.css.map
+
+# Node / npm
+node_modules/
+npm-debug.log*
+.npm/
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store
+*.swp
