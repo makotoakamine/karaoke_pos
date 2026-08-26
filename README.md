@@ -65,42 +65,49 @@ A interface está em português brasileiro (pt-br).
 - **`static/css/main.css`** – CSS compilado (gerado, ignorado pelo git).
 - **`static/vendor/js/bootstrap.bundle.min.js`** – bundle JS do Bootstrap
   (Popper incluído) servido localmente.
-- **`requirements.txt`** – pin do Django.
+- **`pyproject.toml`** / **`uv.lock`** – metadados e lock das dependências
+  Python (Django 5.2.7) gerenciadas via [uv](https://docs.astral.sh/uv/).
 - **`package.json`** – deps npm (Bootstrap 5.3 + Sass) e scripts de build.
 
 ## Pré-requisitos
 
 - Python 3.12+
-- [uv](https://docs.astral.sh/uv/) (gerenciador de ambientes/dependências Python da Astral)
+- [uv](https://docs.astral.sh/uv/) (gerenciador de ambientes/dependências Python
+  da Astral) — instale seguindo
+  <https://docs.astral.sh/uv/getting-started/installation/>
 - Node.js 20+ e npm
 
 ## Configuração do ambiente (a partir de um clone limpo)
 
-Execute todos os comandos a partir da raiz do repositório.
+Execute todos os comandos a partir da raiz do repositório. O Python e as
+dependências Django são gerenciados pelo `uv`: um `uv sync` cria o ambiente
+virtual (`.venv/`) e instala tudo que está no `uv.lock`.
 
 ```bash
-# 1. Criar o ambiente virtual com uv e instalar as dependências Python
-uv venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+# 1. Sincronizar o ambiente Python (cria .venv/ e instala as dependências)
+uv sync
 
-# 2. Instalar as dependências de frontend (Bootstrap + Sass)
+# 2. Aplicar as migrações do banco de dados (SQLite)
+uv run manage.py migrate
+
+# 3. Criar a conta de administrador (único login do sistema por enquanto)
+uv run manage.py createsuperuser
+
+# 4. Rodar o servidor de desenvolvimento
+uv run manage.py runserver
+```
+
+O build do frontend (Bootstrap + Sass) é separado e ainda precisa ser rodado
+uma vez, pois nenhum recurso vem de CDN:
+
+```bash
+# Instalar as dependências de frontend (Bootstrap + Sass)
 npm install
 
-# 3. Compilar o CSS do Bootstrap a partir do Sass
-#    (gera static/css/main.css a partir de static/scss/main.scss)
-npm run build:css
-
-# 4. Copiar o bundle JS do Bootstrap para static/ (servido localmente)
-npm run build:js
-
-# 5. Aplicar as migrações do banco de dados (SQLite)
-.venv/bin/python manage.py migrate
-
-# 6. Criar a conta de administrador (único login do sistema por enquanto)
-.venv/bin/python manage.py createsuperuser
-
-# 7. Rodar o servidor de desenvolvimento
-.venv/bin/python manage.py runserver
+# Compilar o CSS do Bootstrap a partir do Sass e copiar o bundle JS
+# (gera static/css/main.css a partir de static/scss/main.scss
+#  e copia static/vendor/js/bootstrap.bundle.min.js)
+npm run build
 ```
 
 Abra <http://127.0.0.1:8000/> no navegador. A página de landing/login deve
@@ -114,7 +121,7 @@ Por enquanto há um único tipo de usuário — o administrador — criado via
 usuários; papéis e permissões por usuário ficam fora do escopo deste estágio.
 
 ```bash
-.venv/bin/python manage.py createsuperuser
+uv run manage.py createsuperuser
 ```
 
 Informe nome de usuário, e-mail (opcional) e senha quando solicitado. Esse
