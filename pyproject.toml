@@ -1,0 +1,9 @@
+[project]
+name = "karaoke-pos"
+version = "0.1.0"
+description = "Sistema de ponto de venda para karaokê (Django 5.x)."
+requires-python = ">=3.12"
+dependencies = ["django==5.2.7"]
+
+[tool.uv]
+package = false
