@@ -3,7 +3,7 @@
   <div class="row g-3" id="kitchen-queue-grid">
     {% for order in orders %}
       <div class="col-12 col-md-6 col-xl-4" data-order-pk="{{ order.pk }}">
-        <div class="card shadow-sm h-100 border-primary kitchen-card">
+        <div class="card h-100 border-primary kitchen-card">
           <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <span class="fw-bold fs-4">{{ order.table.name|escape }}</span>
             <span class="badge bg-light text-dark fs-6">#{{ order.pk }}</span>

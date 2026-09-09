@@ -8,7 +8,9 @@
   <div class="container py-4">
     <div class="row justify-content-center">
       <div class="col-lg-9 col-md-10">
-        <h1 class="h3 mb-3">{{ title }}</h1>
+        <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <h1 class="h3 mb-0">{{ title }}</h1>
+        </div>
 
         {% if messages %}
           {% for message in messages %}
@@ -19,7 +21,7 @@
           {% endfor %}
         {% endif %}
 
-        <div class="card shadow-sm">
+        <div class="card border">
           <div class="card-body p-4">
             <form method="post" novalidate>
               {% csrf_token %}
@@ -33,7 +35,7 @@
 
               {# Table selector #}
               <fieldset class="mb-4">
-                <legend class="h6 mb-3">{% trans "Mesa" %}</legend>
+                <legend class="karaoke-legend mb-3">{% trans "Pedido" %}</legend>
 
                 {% if order_form.non_field_errors %}
                   <div class="alert alert-danger py-2" role="alert">
@@ -41,7 +43,7 @@
                   </div>
                 {% endif %}
 
-                <div class="mb-3">
+                <div class="mb-3 karaoke-field-narrow{% if order_form.table.errors %} karaoke-field-invalid{% endif %}">
                   <label for="id_table" class="form-label">{{ order_form.table.label }}</label>
                   {{ order_form.table }}
                   {% for error in order_form.table.errors %}
@@ -52,7 +54,7 @@
 
               {# Item lines #}
               <fieldset>
-                <legend class="h6 mb-3">{% trans "Itens" %}</legend>
+                <legend class="karaoke-legend mb-3">{% trans "Itens" %}</legend>
 
                 {{ formset.management_form }}
 
@@ -62,24 +64,27 @@
                   </div>
                 {% endif %}
 
+                {% comment %}Two fixed columns — a flexible item picker and a
+                compact quantity box — so every row, including the ones cloned
+                by "Adicionar item", lines up.{% endcomment %}
                 <div class="table-responsive">
-                  <table class="table table-borderless align-middle mb-2" id="order-lines">
-                    <thead class="visually-hidden">
+                  <table class="table table-borderless align-middle mb-3" id="order-lines">
+                    <thead>
                       <tr>
-                        <th>{% trans "Item" %}</th>
-                        <th class="w-25">{% trans "Quantidade" %}</th>
+                        <th scope="col">{% trans "Item" %}</th>
+                        <th scope="col" class="karaoke-line-qty">{% trans "Quantidade" %}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {% for line in formset.forms %}
                         <tr class="order-line">
-                          <td>
+                          <td class="{% if line.item.errors %}karaoke-field-invalid{% endif %}">
                             {{ line.item }}
                             {% for error in line.item.errors %}
                               <div class="invalid-feedback d-block">{{ error|escape }}</div>
                             {% endfor %}
                           </td>
-                          <td>
+                          <td class="karaoke-line-qty {% if line.quantity.errors %}karaoke-field-invalid{% endif %}">
                             {{ line.quantity }}
                             {% for error in line.quantity.errors %}
                               <div class="invalid-feedback d-block">{{ error|escape }}</div>
@@ -92,12 +97,12 @@
                 </div>
 
                 <button type="button"
-                        class="btn btn-outline-secondary btn-sm"
-                        id="add-order-line">{% trans "Adicionar item" %}</button>
+                        class="btn btn-outline-secondary btn-sm karaoke-btn-ghost"
+                        id="add-order-line">+ {% trans "Adicionar item" %}</button>
               </fieldset>
 
-              <div class="d-flex justify-content-between mt-4">
-                <a href="{% url 'core:home' %}" class="btn btn-outline-secondary">{% trans "Cancelar" %}</a>
+              <div class="karaoke-actions">
+                <a href="{% url 'core:home' %}" class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Cancelar" %}</a>
                 <button type="submit" class="btn btn-primary">{% trans "Registrar pedido" %}</button>
               </div>
             </form>
@@ -110,9 +115,9 @@
 {% endblock %}
 
 {% block extra_js %}
-{# Minimal client-side helper to clone the last line for adding more rows
-   without a round-trip — purely a UX convenience, the server still owns the
-   truth via the formset management form. #}
+{% comment %}Minimal client-side helper to clone the last line for adding
+more rows without a round-trip — purely a UX convenience, the server still
+owns the truth via the formset management form.{% endcomment %}
 <script>
 (function () {
   var btn = document.getElementById("add-order-line");
@@ -131,6 +136,14 @@
       new RegExp(oldPrefix, "g"),
       newPrefix
     );
+    // A cloned row must look exactly like a pristine one: drop any validation
+    // messages and the invalid styling carried over from the source row.
+    clone.querySelectorAll(".invalid-feedback").forEach(function (el) {
+      el.remove();
+    });
+    clone.querySelectorAll(".karaoke-field-invalid").forEach(function (el) {
+      el.classList.remove("karaoke-field-invalid");
+    });
     clone.querySelectorAll("input, select").forEach(function (el) {
       if (el.tagName === "SELECT") {
         el.selectedIndex = 0;

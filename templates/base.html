@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-br" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,7 +11,7 @@
 <body class="d-flex flex-column min-vh-100">
   {# Navbar placeholder - later tasks will populate the menu items #}
   <header>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <nav class="navbar navbar-expand-lg karaoke-navbar">
       <div class="container">
         <a class="navbar-brand fw-bold" href="{% url 'core:login' %}">Karaokê POS</a>
         <button class="navbar-toggler" type="button"
@@ -42,7 +42,7 @@
             <li class="nav-item">
               <form method="post" action="{% url 'core:logout' %}" class="d-inline">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-link nav-link p-0 ms-lg-2">Sair</button>
+                <button type="submit" class="btn btn-link nav-link ms-lg-2">Sair</button>
               </form>
             </li>
             {% else %}
@@ -62,7 +62,7 @@
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="footer mt-auto py-3 bg-light text-center text-muted small">
+  <footer class="karaoke-footer mt-auto py-3 text-center text-body-secondary small">
     <div class="container">
       Karaokê POS &middot; protótipo de scaffold
     </div>

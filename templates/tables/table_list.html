@@ -6,7 +6,7 @@
 {% block content %}
 <section class="karaoke-tables-list">
   <div class="container py-4">
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+    <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <h1 class="h3 mb-0">{% trans "Mesas" %}</h1>
       <a href="{% url 'tables:table-create' %}" class="btn btn-primary">
         {% trans "Nova mesa" %}
@@ -22,11 +22,11 @@
       {% endfor %}
     {% endif %}
 
-    <div class="card shadow-sm">
+    <div class="card border">
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-striped table-hover align-middle mb-0">
-            <thead class="table-light">
+          <table class="table table-hover karaoke-table align-middle mb-0">
+            <thead>
               <tr>
                 <th scope="col">{% trans "Nome" %}</th>
                 <th scope="col" class="text-end">{% trans "Lugares" %}</th>
@@ -61,7 +61,7 @@
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan="4" class="text-center text-muted py-4">
+                  <td colspan="4" class="text-center text-body-secondary py-4">
                     {% trans "Nenhuma mesa ativa. Clique em \"Nova mesa\" para começar." %}
                   </td>
                 </tr>

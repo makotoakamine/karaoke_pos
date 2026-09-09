@@ -6,7 +6,7 @@
 {% block content %}
 <section class="karaoke-inventory-list">
   <div class="container py-4">
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+    <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <h1 class="h3 mb-0">{% trans "Estoque" %}</h1>
       <a href="{% url 'inventory:item-create' %}" class="btn btn-primary">
         {% trans "Novo item" %}
@@ -22,11 +22,11 @@
       {% endfor %}
     {% endif %}
 
-    <div class="card shadow-sm">
+    <div class="card border">
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-striped table-hover align-middle mb-0">
-            <thead class="table-light">
+          <table class="table table-hover karaoke-table align-middle mb-0">
+            <thead>
               <tr>
                 <th scope="col">{% trans "Nome" %}</th>
                 <th scope="col" class="text-end">{% trans "Preço" %}</th>
@@ -37,30 +37,37 @@
             </thead>
             <tbody>
               {% for item in items %}
-                <tr class="{% if not item.is_active %}text-muted table-secondary{% endif %}">
+                <tr class="{% if not item.is_active %}karaoke-row-inactive{% endif %}">
                   <td>
                     {{ item.name|escape }}
                     {% if not item.is_active %}
-                      <span class="badge bg-secondary ms-1">{% trans "inativo" %}</span>
+                      <span class="badge karaoke-chip karaoke-chip-off ms-1">{% trans "inativo" %}</span>
                     {% endif %}
                   </td>
                   <td class="text-end">R$ {{ item.price|stringformat:".2f" }}</td>
                   <td class="text-end">{{ item.stock }}</td>
                   <td class="text-center">
                     {% if item.is_active %}
-                      <span class="badge bg-success">{% trans "sim" %}</span>
+                      <span class="badge karaoke-chip karaoke-chip-on">{% trans "sim" %}</span>
                     {% else %}
-                      <span class="badge bg-secondary">{% trans "não" %}</span>
+                      <span class="badge karaoke-chip karaoke-chip-off">{% trans "não" %}</span>
                     {% endif %}
                   </td>
-                  <td class="text-end text-nowrap">
-                    <a href="{% url 'inventory:item-update' item.pk %}" class="btn btn-sm btn-outline-secondary">{% trans "Editar" %}</a>
-                    <a href="{% url 'inventory:item-delete' item.pk %}" class="btn btn-sm btn-outline-danger">{% trans "Excluir" %}</a>
+                  <td class="text-end">
+                    {% comment %}btn-group keeps the two actions flush and the
+                    shared min-width keeps them the same size in every row.{% endcomment %}
+                    <div class="btn-group btn-group-sm karaoke-row-actions" role="group"
+                         aria-label="{% trans 'Ações do item' %}">
+                      <a href="{% url 'inventory:item-update' item.pk %}"
+                         class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Editar" %}</a>
+                      <a href="{% url 'inventory:item-delete' item.pk %}"
+                         class="btn btn-outline-danger">{% trans "Excluir" %}</a>
+                    </div>
                   </td>
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan="5" class="text-center text-muted py-4">
+                  <td colspan="5" class="text-center text-body-secondary py-4">
                     {% trans "Nenhum item cadastrado. Clique em \"Novo item\" para começar." %}
                   </td>
                 </tr>
