@@ -6,18 +6,44 @@
 {% block content %}
 <section class="karaoke-home">
   <div class="container py-4">
-    <div class="p-5 karaoke-panel">
-      <h1 class="h2 mb-3">{% trans "Bem-vindo(a)" %}, {{ request.user.get_username }}!</h1>
-      <p class="lead">{% trans "Página inicial do Karaokê POS — o painel de navegação crescerá aqui nas próximas tarefas." %}</p>
-      <hr class="my-4">
-      <a href="{% url 'inventory:item-list' %}" class="btn btn-primary me-2">{% trans "Estoque" %}</a>
-      <a href="{% url 'tables:table-list' %}" class="btn btn-primary me-2">{% trans "Mesas" %}</a>
-      <a href="{% url 'orders:order-create' %}" class="btn btn-primary me-2">{% trans "Novo pedido" %}</a>
-      <a href="{% url 'orders:kitchen' %}" class="btn btn-primary me-2">{% trans "Cozinha" %}</a>
-      <form method="post" action="{% url 'core:logout' %}" class="d-inline-block">
+    <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div>
+        <h1 class="h3 mb-1">{% trans "Bem-vindo(a)" %}, {{ request.user.get_username }}!</h1>
+        <p class="karaoke-micro mb-0">{% trans "Painel de operação" %}</p>
+      </div>
+      <form method="post" action="{% url 'core:logout' %}">
         {% csrf_token %}
-        <button type="submit" class="btn btn-outline-secondary">{% trans "Sair" %}</button>
+        <button type="submit" class="btn btn-sm btn-outline-secondary karaoke-btn-ghost">{% trans "Sair" %}</button>
       </form>
+    </div>
+
+    {% comment %}One flat bordered card per destination; the micro-label under
+    each title says what the page is for without a second click.{% endcomment %}
+    <div class="row g-3">
+      <div class="col-12 col-sm-6 col-lg-3">
+        <a href="{% url 'inventory:item-list' %}" class="karaoke-nav-card">
+          <h2 class="karaoke-title">{% trans "Estoque" %}</h2>
+          <p class="karaoke-micro mb-0">{% trans "Itens, preços e quantidades" %}</p>
+        </a>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
+        <a href="{% url 'tables:table-list' %}" class="karaoke-nav-card">
+          <h2 class="karaoke-title">{% trans "Mesas" %}</h2>
+          <p class="karaoke-micro mb-0">{% trans "Ocupação do salão" %}</p>
+        </a>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
+        <a href="{% url 'orders:order-create' %}" class="karaoke-nav-card">
+          <h2 class="karaoke-title">{% trans "Novo pedido" %}</h2>
+          <p class="karaoke-micro mb-0">{% trans "Lançar itens em uma mesa" %}</p>
+        </a>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
+        <a href="{% url 'orders:kitchen' %}" class="karaoke-nav-card">
+          <h2 class="karaoke-title">{% trans "Cozinha" %}</h2>
+          <p class="karaoke-micro mb-0">{% trans "Fila de pedidos abertos" %}</p>
+        </a>
+      </div>
     </div>
   </div>
 </section>

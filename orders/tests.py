@@ -478,6 +478,48 @@ class KitchenViewTests(TestCase):
         self.assertIn(reverse("orders:kitchen-queue"), body)
         self.assertIn("setInterval", body)
 
+    # --- acceptance: elapsed-time escalation (#204) ------------------------
+
+    def test_fresh_order_card_is_not_escalated(self):
+        self._make_order(
+            self.table_a,
+            [(self.item, 1)],
+            created_at=timezone.now() - timezone.timedelta(minutes=2),
+        )
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("kitchen-card-late", body)
+        self.assertNotIn("kitchen-card-overdue", body)
+
+    def test_order_older_than_fifteen_minutes_is_escalated(self):
+        self._make_order(
+            self.table_a,
+            [(self.item, 1)],
+            created_at=timezone.now() - timezone.timedelta(minutes=16),
+        )
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("kitchen-card-late", body)
+        self.assertNotIn("kitchen-card-overdue", body)
+
+    def test_order_older_than_thirty_minutes_escalates_further(self):
+        self._make_order(
+            self.table_a,
+            [(self.item, 1)],
+            created_at=timezone.now() - timezone.timedelta(minutes=45),
+        )
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("kitchen-card-overdue", body)
+        self.assertNotIn("kitchen-card-late", body)
+
+    def test_polling_fragment_also_escalates_old_orders(self):
+        """The escalation lives in the partial, so the poll must carry it too."""
+        self._make_order(
+            self.table_a,
+            [(self.item, 1)],
+            created_at=timezone.now() - timezone.timedelta(minutes=20),
+        )
+        body = self.client.get(reverse("orders:kitchen-queue")).content.decode()
+        self.assertIn("kitchen-card-late", body)
+
     # --- navigation --------------------------------------------------------
 
     def test_navbar_links_to_kitchen(self):

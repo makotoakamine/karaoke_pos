@@ -41,22 +41,28 @@
                   <td class="text-end">{{ table.seats }}</td>
                   <td class="text-center">
                     {% if table.status == 'free' %}
-                      <span class="badge bg-success">{% trans "Livre" %}</span>
+                      <span class="badge karaoke-chip karaoke-chip-on">{% trans "Livre" %}</span>
                     {% else %}
-                      <span class="badge bg-danger">{% trans "Ocupada" %}</span>
+                      <span class="badge karaoke-chip karaoke-chip-alert">{% trans "Ocupada" %}</span>
                     {% endif %}
                   </td>
-                  <td class="text-end text-nowrap">
-                    <form method="post" action="{% url 'tables:table-list' %}" class="d-inline">
-                      {% csrf_token %}
-                      <input type="hidden" name="table_id" value="{{ table.pk }}">
-                      {% if table.status == 'free' %}
-                        <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Marcar ocupada" %}</button>
-                      {% else %}
-                        <button type="submit" class="btn btn-sm btn-outline-success">{% trans "Marcar livre" %}</button>
-                      {% endif %}
-                    </form>
-                    <a href="{% url 'tables:table-update' table.pk %}" class="btn btn-sm btn-outline-secondary">{% trans "Editar" %}</a>
+                  <td class="text-end">
+                    {% comment %}The status toggle is a form and "Editar" a link,
+                    so they cannot share a .btn-group; the split variant lays
+                    them out flush and at a shared width instead.{% endcomment %}
+                    <div class="karaoke-row-actions-split">
+                      <form method="post" action="{% url 'tables:table-list' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="table_id" value="{{ table.pk }}">
+                        {% if table.status == 'free' %}
+                          <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Marcar ocupada" %}</button>
+                        {% else %}
+                          <button type="submit" class="btn btn-sm btn-outline-success">{% trans "Marcar livre" %}</button>
+                        {% endif %}
+                      </form>
+                      <a href="{% url 'tables:table-update' table.pk %}"
+                         class="btn btn-sm btn-outline-secondary karaoke-btn-ghost">{% trans "Editar" %}</a>
+                    </div>
                   </td>
                 </tr>
               {% empty %}

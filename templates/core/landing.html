@@ -8,14 +8,14 @@
   <div class="container">
     <div class="row justify-content-center">
       <div class="col-lg-5 col-md-7 col-sm-10">
-        <div class="text-center mb-4">
-          <h1 class="karaoke-brand">Karaokê POS</h1>
-          <p class="lead text-muted">Karaokê em família &middot; sistema de ponto de venda</p>
-        </div>
-
+        {% comment %}A single flat card carries the wordmark and the form —
+        no hero band above it, nothing floating.{% endcomment %}
         <div class="card border">
           <div class="card-body p-4">
-            <h2 class="h4 card-title text-center mb-3">{% trans "Acesso do administrador" %}</h2>
+            <div class="text-center mb-4">
+              <h1 class="karaoke-brand">Karaokê POS</h1>
+              <p class="karaoke-micro mb-0 mt-3">{% trans "Acesso do administrador" %}</p>
+            </div>
 
             {% if form.non_field_errors %}
               <div class="alert alert-danger py-2 mb-3" role="alert">
@@ -34,7 +34,7 @@
                 {% for error in form.username.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
               </div>
 
-              <div class="mb-3">
+              <div class="mb-4">
                 <label for="id_password" class="form-label">{{ form.password.label_tag|striptags }}</label>
                 <input type="password" name="password" id="id_password"
                        class="form-control{% if form.password.errors %} is-invalid{% endif %}"
@@ -51,8 +51,8 @@
           </div>
         </div>
 
-        <p class="text-center text-muted small mt-3">
-          {% trans "Acesso restrito ao administrador." %}
+        <p class="karaoke-micro text-center mt-3">
+          {% trans "Karaokê em família · sistema de ponto de venda" %}
         </p>
       </div>
     </div>
