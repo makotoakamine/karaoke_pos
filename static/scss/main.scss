@@ -94,17 +94,43 @@ h1, h2, h3, h4, h5, h6,
   letter-spacing: -.02em;
 }
 
-// The "spec sheet" look: field labels, fieldset legends and table headers all
-// render as small uppercase letter-spaced text.
-.form-label,
-.col-form-label,
-.karaoke-legend,
-.table > thead th {
+// The "spec sheet" look: small, uppercase, letter-spaced, muted. Used by field
+// labels, table headers, definition terms and every ad-hoc caption in the app.
+@mixin karaoke-micro-label {
   font-size: .72rem;
   font-weight: 600;
   letter-spacing: .09em;
   text-transform: uppercase;
   color: var(--bs-secondary-color);
+}
+
+.form-label,
+.col-form-label,
+.karaoke-legend,
+.karaoke-deflist dt,
+.table > thead th {
+  @include karaoke-micro-label;
+}
+
+// Opt-in version for markup that is not a label: card captions, elapsed times,
+// nav-card descriptions.
+.karaoke-micro {
+  @include karaoke-micro-label;
+}
+
+// Bold, tight-tracked heading used where a bare `.h*` would carry too much
+// margin — kitchen table names, nav-card titles.
+.karaoke-title {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--bs-emphasis-color);
+}
+
+// The term is a micro-label and the value plain body text; nudge the term down
+// so the two share a baseline across the row.
+.karaoke-deflist dt {
+  padding-top: .2rem;
 }
 
 .karaoke-legend {
@@ -209,6 +235,15 @@ h1, h2, h3, h4, h5, h6,
   --bs-btn-hover-border-color: #{$danger};
 }
 
+// Same problem for the "Marcar livre" toggle on /mesas/: $success is tuned for
+// white backgrounds and reads too dark as outline text on the canvas.
+.btn-outline-success {
+  --bs-btn-color: #{tint-color($success, 35%)};
+  --bs-btn-border-color: #{rgba($success, .6)};
+  --bs-btn-hover-bg: #{$success};
+  --bs-btn-hover-border-color: #{$success};
+}
+
 // Ghost button: outlined, muted until hovered — used for "Adicionar item".
 .karaoke-btn-ghost {
   --bs-btn-color: var(--bs-body-color);
@@ -236,6 +271,25 @@ h1, h2, h3, h4, h5, h6,
 // from row to row.
 .karaoke-row-actions .btn {
   min-width: 5.5rem;
+}
+
+// Variant for rows whose actions mix a <form> button with a plain link: those
+// cannot share a `.btn-group`, so lay them out as a flex row instead. The
+// wrapping <form> becomes a flex container itself so the button it holds is
+// sized by `min-width` exactly like its sibling link.
+.karaoke-row-actions-split {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+
+  > form {
+    margin: 0;
+    display: flex;
+  }
+
+  .btn {
+    min-width: 8.5rem;
+  }
 }
 
 // -- Tables ------------------------------------------------------------------
@@ -294,6 +348,13 @@ h1, h2, h3, h4, h5, h6,
   border-color: var(--bs-border-color);
 }
 
+.karaoke-chip-alert {
+  --bs-badge-color: #{tint-color($danger, 35%)};
+
+  background-color: rgba(var(--bs-danger-rgb), .12);
+  border-color: rgba(var(--bs-danger-rgb), .45);
+}
+
 // `.bg-secondary` badges elsewhere (kitchen quantities) need the same
 // treatment; the utility carries !important so the override must too.
 .badge.bg-secondary {
@@ -349,6 +410,122 @@ h1, h2, h3, h4, h5, h6,
   }
 }
 
+// -- Kitchen screen (/cozinha/) ----------------------------------------------
+// A ticket is a flat surface like every other card; what makes it readable
+// across a noisy kitchen is a thick accent edge and a big table name, not a
+// filled header bar. The edge doubles as the age indicator (see below).
+.kitchen-card {
+  border-left: 4px solid $primary;
+}
+
+.kitchen-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .75rem 1rem;
+  background-color: var(--bs-tertiary-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.kitchen-card-head .karaoke-title {
+  font-size: 1.5rem;
+}
+
+// Elapsed time reads as a micro-label and escalates with age, so a ticket that
+// has been sitting too long is obvious from across the room: accent edge up to
+// 15 minutes, amber past 15, red past 30.
+.kitchen-elapsed {
+  @include karaoke-micro-label;
+}
+
+.kitchen-card-late {
+  border-left-color: $warning;
+
+  .kitchen-elapsed {
+    color: $warning;
+  }
+}
+
+.kitchen-card-overdue {
+  border-left-color: $danger;
+
+  .kitchen-elapsed {
+    color: #{tint-color($danger, 30%)};
+  }
+}
+
+// Order lines: hairline-separated rows, large enough to read at arm's length.
+.kitchen-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  > li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .5rem 0;
+    font-size: 1.25rem;
+    border-bottom: 1px solid var(--bs-border-color);
+  }
+
+  > li:first-child {
+    padding-top: 0;
+  }
+
+  > li:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+}
+
+// The "Pronto" button stays a big touch target, but squared and uppercase like
+// the rest of the theme instead of a rounded pill.
+.kitchen-btn-done {
+  --bs-btn-hover-bg: #{tint-color($success, 15%)};
+  --bs-btn-hover-border-color: #{tint-color($success, 15%)};
+  --bs-btn-active-bg: #{tint-color($success, 25%)};
+  --bs-btn-active-border-color: #{tint-color($success, 25%)};
+
+  width: 100%;
+  padding: .85rem 1rem;
+  font-size: 1.05rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+// -- Home (/home/) -----------------------------------------------------------
+// One flat bordered card per destination. Hovering shifts the border to the
+// accent and barely tints the surface; nothing lifts, nothing gains a shadow.
+.karaoke-nav-card {
+  display: block;
+  height: 100%;
+  padding: 1.25rem;
+  background-color: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+  color: var(--bs-body-color);
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--bs-body-color);
+    background-color: rgba(var(--bs-emphasis-color-rgb), .04);
+    border-color: $primary;
+  }
+
+  &:hover .karaoke-title,
+  &:focus-visible .karaoke-title {
+    color: #{tint-color($primary, 45%)};
+  }
+
+  .karaoke-title {
+    margin-bottom: .35rem;
+    font-size: 1.15rem;
+  }
+}
+
 // -- Landing / hero ----------------------------------------------------------
 .karaoke-hero {
   padding: 3rem 1.5rem;
@@ -383,10 +560,6 @@ h1, h2, h3, h4, h5, h6,
   height: 3px;
   margin: .75rem auto 0;
   background-color: $primary;
-}
-
-.karaoke-landing .lead {
-  font-weight: 400;
 }
 
 // Bootstrap hardcodes a circular radio outside the border-radius mixin, so

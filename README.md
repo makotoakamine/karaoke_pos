@@ -160,6 +160,28 @@ não nos templates: a linha extra criada pelo botão "Adicionar item" em
 `/pedidos/novo/` é um clone do HTML já renderizado, então o estilo precisa
 vir do próprio widget.
 
+O tema foi estendido às demais páginas em #204, reaproveitando os utilitários
+de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
+`.karaoke-chip*`, `.karaoke-btn-ghost`):
+
+- `/` (landing) — um único card plano com a marca, rótulos em caixa alta e
+  botão "Entrar" de largura total.
+- `/home/` — grade de cards de navegação (`.karaoke-nav-card`) para Estoque,
+  Mesas, Novo pedido e Cozinha; o logout é um botão outline no cabeçalho.
+- `/mesas/` — mesma tabela escura de `/estoque/`, com badges quadrados e
+  ações de largura uniforme (`.karaoke-row-actions-split`, necessário porque
+  o toggle de status é um `<form>` e "Editar" um link).
+- `/pedidos/cozinha/` — comandas planas com uma borda-acento grossa à
+  esquerda no lugar do cabeçalho roxo preenchido, e botão "Pronto" grande e
+  quadrado. A borda e o tempo decorrido **escalam com a idade da comanda**:
+  acento até 15 min, âmbar (`.kitchen-card-late`) acima de 15, vermelho
+  (`.kitchen-card-overdue`) acima de 30. O cálculo vive no filtro
+  `orders/templatetags/kitchen_tags.py` (`minutes_since`) e não na view, para
+  que o endpoint de polling receba a escalada de graça.
+- Formulários de item/mesa e a confirmação de exclusão — card plano, rótulos
+  em caixa alta e barra de ações alinhada à direita (`Cancelar` outline,
+  ação destrutiva em `btn-danger`).
+
 ### Customizando o tema do Bootstrap
 
 Edite as variáveis no topo de `static/scss/main.scss` (antes do

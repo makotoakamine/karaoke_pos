@@ -30,16 +30,21 @@ class TableViewTests(TestCase):
         self.assertIn("Marcar ocupada", body)
 
     def test_free_and_occupied_badges_distinguishable(self):
+        # The two states must not share a badge style. Since #204 the badges
+        # are the theme's square "chips", so the distinguishing class is the
+        # chip modifier rather than a Bootstrap background utility.
         self.table.status = "occupied"
         self.table.save()
         resp = self.client.get(reverse("tables:table-list"))
         body = resp.content.decode()
-        self.assertIn('bg-danger', body)
+        self.assertIn("karaoke-chip-alert", body)
+        self.assertNotIn("karaoke-chip-on", body)
         self.table.status = "free"
         self.table.save()
         resp = self.client.get(reverse("tables:table-list"))
         body = resp.content.decode()
-        self.assertIn('bg-success', body)
+        self.assertIn("karaoke-chip-on", body)
+        self.assertNotIn("karaoke-chip-alert", body)
 
     def test_create_table_via_post(self):
         resp = self.client.post(
