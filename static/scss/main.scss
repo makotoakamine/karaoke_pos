@@ -1,6 +1,12 @@
-// Karaoke POS - main stylesheet
+// Karaokê POS - main stylesheet
 // Bootstrap 5.3 is installed via npm and compiled from Sass so the theme can be
 // customized by overriding variables before importing Bootstrap.
+//
+// Visual language (#203): dark "tech" theme — near-black canvas, flat surfaces
+// separated by 1px borders instead of elevation, bright violet accent and
+// SHARP CORNERS everywhere (zero border-radius). Headings are bold and
+// tight-tracked; labels and table headers read like a spec sheet: small,
+// uppercase, letter-spaced.
 
 // ---------------------------------------------------------------------------
 // Bootstrap variable overrides
@@ -8,20 +14,66 @@
 // Customize Bootstrap here. Changing any of these values and re-running
 // `npm run build:css` will visibly change the rendered page.
 
-// Primary brand color (override Bootstrap's default $primary).
-$primary: #6f42c1; // roxo - identidade visual do Karaokê POS
+// -- Shape -------------------------------------------------------------------
+// The defining trait of the theme: nothing is rounded, nothing floats.
+// `$enable-rounded: false` neutralises the border-radius mixin; zeroing the
+// radius variables also squares the `.rounded-*` utilities and every component
+// that reads `var(--bs-border-radius)` directly.
+$enable-rounded: false;
+$enable-shadows: false;
 
-// Slightly rounded corners for a softer, modern look.
-$border-radius: 0.5rem;
-$border-radius-sm: 0.375rem;
-$border-radius-lg: 0.75rem;
+$border-radius:        0;
+$border-radius-sm:     0;
+$border-radius-lg:     0;
+$border-radius-xl:     0;
+$border-radius-xxl:    0;
+$border-radius-pill:   0;
 
+// -- Accent ------------------------------------------------------------------
+// The purple identity of the Karaokê POS, brightened for dark backgrounds so
+// primary CTAs pop against the near-black canvas (was #6f42c1).
+$primary:   #7c3aed; // roxo - identidade visual do Karaokê POS
+$secondary: #8b8b9e; // cinza frio, claro o bastante para ler sobre o fundo escuro
+
+// -- Dark palette ------------------------------------------------------------
+// `data-bs-theme="dark"` is set on <html> in templates/base.html, so these are
+// the values that actually render. Bootstrap derives the rest (muted text,
+// select caret, switch knob) from them.
+$body-bg-dark:                  #0a0a0f; // canvas
+$body-secondary-bg-dark:        #121218; // cards / superfícies
+$body-tertiary-bg-dark:         #17171f; // inputs, cabeçalho de tabela
+$body-color-dark:               #c9c9d6;
+$body-emphasis-color-dark:      #ffffff;
+$border-color-dark:             #2a2a33;
+$border-color-translucent-dark: #2a2a33; // borda nítida de 1px, não translúcida
+$headings-color-dark:           #f2f2f7;
+
+// -- Typography --------------------------------------------------------------
 // Use the system font stack instead of Bootstrap's default web font.
 $font-family-sans-serif: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+$headings-font-weight: 700;
+
+// -- Surfaces ----------------------------------------------------------------
+// Cards sit one step above the canvas and are delimited by a border, never by
+// a shadow. Inputs sit one step above the card so fields read as recessed.
+$card-bg:           var(--bs-secondary-bg);
+$card-border-color: var(--bs-border-color);
+
+$input-bg:          var(--bs-tertiary-bg);
+$input-disabled-bg: var(--bs-secondary-bg);
+
+// Tables are transparent so the card surface shows through; rows are separated
+// by a single hairline.
+$table-bg: transparent;
+
+// -- Controls ----------------------------------------------------------------
+$btn-font-weight:  600;
+$focus-ring-width: .2rem;
+$focus-ring-color: rgba($primary, .4);
 
 // Navbar styling overrides.
 $navbar-brand-font-size: 1.25rem;
-$navbar-padding-y: 0.75rem;
+$navbar-padding-y: .75rem;
 
 // ---------------------------------------------------------------------------
 // Import Bootstrap from node_modules
@@ -33,23 +85,284 @@ $navbar-padding-y: 0.75rem;
 // ---------------------------------------------------------------------------
 // Project-specific styles
 // ---------------------------------------------------------------------------
-body {
-  background-color: #f8f9fa;
+// Everything below reads theme-aware CSS custom properties (`--bs-*`) instead
+// of hardcoded light-theme colors, so the shell follows `data-bs-theme`.
+
+// -- Typography --------------------------------------------------------------
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+  letter-spacing: -.02em;
 }
 
+// The "spec sheet" look: field labels, fieldset legends and table headers all
+// render as small uppercase letter-spaced text.
+.form-label,
+.col-form-label,
+.karaoke-legend,
+.table > thead th {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.karaoke-legend {
+  float: none; // reset the browser default legend layout
+  width: auto;
+  padding-bottom: .5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+// -- Shell: navbar and footer -----------------------------------------------
+.karaoke-navbar {
+  background-color: var(--bs-body-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+
+  .navbar-brand {
+    letter-spacing: -.02em;
+    color: var(--bs-emphasis-color);
+
+    &:hover,
+    &:focus {
+      color: var(--bs-emphasis-color);
+    }
+  }
+
+  .navbar-brand::before {
+    content: "";
+    display: inline-block;
+    width: .5rem;
+    height: 1rem;
+    margin-right: .5rem;
+    vertical-align: -.1rem;
+    background-color: $primary;
+  }
+
+  .nav-link {
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-bottom: 2px solid transparent;
+
+    &:hover,
+    &:focus,
+    &.active {
+      color: var(--bs-emphasis-color);
+      border-bottom-color: $primary;
+    }
+  }
+
+  // The "Sair" button is a <button class="btn btn-link nav-link">; strip the
+  // button chrome so it sits on the same baseline as the surrounding links.
+  .btn-link.nav-link {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--bs-navbar-color);
+    text-decoration: none;
+
+    &:hover,
+    &:focus {
+      color: var(--bs-emphasis-color);
+      border-bottom-color: $primary;
+    }
+  }
+}
+
+.karaoke-footer {
+  background-color: var(--bs-body-bg);
+  border-top: 1px solid var(--bs-border-color);
+}
+
+// -- Surfaces ----------------------------------------------------------------
+// Flat panel used where a page needs a surface but not a full card.
+.karaoke-panel {
+  background-color: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+}
+
+// Page header: title on the left, primary action on the right, both vertically
+// centered, separated from the content by a hairline.
+.karaoke-page-header {
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+// -- Buttons -----------------------------------------------------------------
+// On a dark canvas a CTA should get brighter on hover, not darker, so flip
+// Bootstrap's default shade-on-hover for the primary variant.
+.btn-primary {
+  --bs-btn-hover-bg: #{tint-color($primary, 15%)};
+  --bs-btn-hover-border-color: #{tint-color($primary, 15%)};
+  --bs-btn-active-bg: #{tint-color($primary, 25%)};
+  --bs-btn-active-border-color: #{tint-color($primary, 25%)};
+}
+
+// Bootstrap's $danger is tuned for white backgrounds; as outline-button text
+// on the near-black canvas it drops under 4.5:1. Tint it for the dark theme.
+.btn-outline-danger {
+  --bs-btn-color: #{tint-color($danger, 30%)};
+  --bs-btn-border-color: #{rgba($danger, .6)};
+  --bs-btn-hover-bg: #{$danger};
+  --bs-btn-hover-border-color: #{$danger};
+}
+
+// Ghost button: outlined, muted until hovered — used for "Adicionar item".
+.karaoke-btn-ghost {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: #{tint-color($primary, 40%)};
+  --bs-btn-hover-bg: transparent;
+  --bs-btn-hover-border-color: #{$primary};
+  --bs-btn-active-color: #{tint-color($primary, 40%)};
+  --bs-btn-active-bg: transparent;
+  --bs-btn-active-border-color: #{$primary};
+  letter-spacing: .04em;
+}
+
+// Action bar at the foot of a form: right-aligned, separated by a hairline.
+.karaoke-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+  padding-top: 1.25rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+// Row actions in a listing: every button the same width so the columns line up
+// from row to row.
+.karaoke-row-actions .btn {
+  min-width: 5.5rem;
+}
+
+// -- Tables ------------------------------------------------------------------
+.karaoke-table {
+  --bs-table-hover-bg: rgba(var(--bs-emphasis-color-rgb), .04);
+
+  > thead th {
+    background-color: var(--bs-tertiary-bg);
+    border-bottom: 1px solid var(--bs-border-color);
+    white-space: nowrap;
+  }
+
+  > tbody > tr > * {
+    border-bottom-color: var(--bs-border-color);
+  }
+
+  > tbody > tr:last-child > * {
+    border-bottom-width: 0;
+  }
+}
+
+// Retired catalogue rows: dimmed, never a light-theme "table-secondary" band.
+.karaoke-row-inactive > * {
+  --bs-table-color-type: var(--bs-secondary-color);
+
+  color: var(--bs-secondary-color);
+}
+
+// -- Badges ------------------------------------------------------------------
+.badge {
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+// Tinted "chip" badges: a translucent fill plus a 1px border, in the spirit of
+// the flat surfaces used everywhere else.
+.karaoke-chip {
+  --bs-badge-color: var(--bs-body-color);
+
+  background-color: rgba(var(--bs-emphasis-color-rgb), .06);
+  border: 1px solid var(--bs-border-color);
+}
+
+.karaoke-chip-on {
+  --bs-badge-color: #{tint-color($success, 45%)};
+
+  background-color: rgba(var(--bs-success-rgb), .12);
+  border-color: rgba(var(--bs-success-rgb), .45);
+}
+
+.karaoke-chip-off {
+  --bs-badge-color: var(--bs-secondary-color);
+
+  background-color: rgba(var(--bs-emphasis-color-rgb), .06);
+  border-color: var(--bs-border-color);
+}
+
+// `.bg-secondary` badges elsewhere (kitchen quantities) need the same
+// treatment; the utility carries !important so the override must too.
+.badge.bg-secondary {
+  background-color: rgba(var(--bs-emphasis-color-rgb), .1) !important;
+  color: var(--bs-emphasis-color);
+}
+
+// -- Forms -------------------------------------------------------------------
+// Errors have to be unmistakable against the dark canvas: the field itself
+// picks up the invalid border, and the message sits right under it.
+.karaoke-field-invalid {
+  .form-control,
+  .form-select {
+    border-color: var(--bs-form-invalid-color);
+  }
+}
+
+.invalid-feedback {
+  font-size: .8125rem;
+  font-weight: 500;
+}
+
+// A single field that should not stretch the full width of a wide card.
+.karaoke-field-narrow {
+  max-width: 24rem;
+}
+
+// -- Order form (/pedidos/novo/) ---------------------------------------------
+// Item lines are a two-column grid: a flexible item picker and a compact,
+// fixed-width quantity box, so every row (including the ones cloned by
+// "Adicionar item") lines up.
+#order-lines {
+  > thead th,
+  > tbody td {
+    padding-left: 0;
+    padding-right: .75rem;
+    vertical-align: top;
+  }
+
+  > thead th:last-child,
+  > tbody td:last-child {
+    padding-right: 0;
+  }
+
+  .karaoke-line-qty {
+    width: 8rem;
+  }
+}
+
+@include media-breakpoint-down(sm) {
+  #order-lines .karaoke-line-qty {
+    width: 5.5rem;
+  }
+}
+
+// -- Landing / hero ----------------------------------------------------------
 .karaoke-hero {
   padding: 3rem 1.5rem;
   text-align: center;
 }
 
 .karaoke-hero h1 {
-  font-weight: 700;
   margin-bottom: 1rem;
-  color: $primary;
+  font-weight: 700;
+  color: var(--bs-emphasis-color);
 }
 
 .karaoke-hero p.lead {
-  color: #495057;
+  color: var(--bs-secondary-color);
 }
 
 .karaoke-landing {
@@ -57,12 +370,27 @@ body {
 }
 
 .karaoke-landing .karaoke-brand {
-  font-weight: 800;
   font-size: 2.5rem;
-  color: $primary;
-  letter-spacing: -0.02em;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  color: var(--bs-emphasis-color);
+}
+
+.karaoke-landing .karaoke-brand::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 3px;
+  margin: .75rem auto 0;
+  background-color: $primary;
 }
 
 .karaoke-landing .lead {
   font-weight: 400;
+}
+
+// Bootstrap hardcodes a circular radio outside the border-radius mixin, so
+// `$enable-rounded: false` misses it — square it here too.
+.form-check-input[type="radio"] {
+  border-radius: 0;
 }

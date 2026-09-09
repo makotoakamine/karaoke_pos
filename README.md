@@ -61,7 +61,9 @@ A interface está em português brasileiro (pt-br).
 - **`templates/core/home.html`** – home autenticada (stub) que futuros painéis
   vão ampliar.
 - **`static/scss/main.scss`** – ponto de entrada do Sass; sobrescreve
-  variáveis do Bootstrap **antes** de importá-lo, permitindo customização do tema.
+  variáveis do Bootstrap **antes** de importá-lo, permitindo customização do
+  tema. Define o tema escuro de cantos retos (#203) — ver
+  ["Tema escuro"](#tema-escuro-tech-203).
 - **`static/css/main.css`** – CSS compilado (gerado, ignorado pelo git).
 - **`static/vendor/js/bootstrap.bundle.min.js`** – bundle JS do Bootstrap
   (Popper incluído) servido localmente.
@@ -111,8 +113,9 @@ npm run build
 ```
 
 Abra <http://127.0.0.1:8000/> no navegador. A página de landing/login deve
-carregar estilizada pelo Bootstrap compilado localmente, com a barra de
-navegação roxa no topo e o formulário de acesso centralizado.
+carregar estilizada pelo Bootstrap compilado localmente, com o tema escuro
+aplicado (fundo quase preto, barra de navegação plana com borda inferior) e o
+formulário de acesso centralizado.
 
 ## Conta de administrador
 
@@ -135,6 +138,27 @@ Para recompilar o CSS automaticamente ao editar o Sass:
 ```bash
 npm run watch:css
 ```
+
+### Tema escuro "tech" (#203)
+
+A interface usa um tema escuro de cantos retos: `templates/base.html` define
+`data-bs-theme="dark"` no `<html>` e `static/scss/main.scss` ajusta a paleta
+escura do Bootstrap antes do `@import`. As decisões que definem o visual:
+
+- `$enable-rounded: false` (mais `$border-radius*: 0`) — **nenhum** canto
+  arredondado em botões, cards, inputs, badges ou alertas.
+- `$enable-shadows: false` — superfícies planas separadas por bordas de 1px;
+  os templates usam `border` no lugar de `shadow-sm`.
+- Paleta: fundo `#0a0a0f`, cards `#121218`, inputs `#17171f`, bordas `#2a2a33`.
+- Acento roxo `#7c3aed` (identidade original clareada para fundo escuro).
+- Rótulos de formulário, legendas e cabeçalhos de tabela em caixa alta,
+  pequenos e espaçados ("spec sheet").
+
+As classes Bootstrap dos widgets ficam em `orders/forms.py` e
+`inventory/forms.py` (`form-select`, `form-control`, `form-check-input`),
+não nos templates: a linha extra criada pelo botão "Adicionar item" em
+`/pedidos/novo/` é um clone do HTML já renderizado, então o estilo precisa
+vir do próprio widget.
 
 ### Customizando o tema do Bootstrap
 
