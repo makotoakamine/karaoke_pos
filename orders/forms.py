@@ -7,9 +7,8 @@ responsible for validating quantities against current stock inside the
 submission transaction, so this form only enforces per-line sanity (quantity
 is a positive integer, item is one of the active-with-stock queryset).
 
-Bootstrap classes are declared on the widgets rather than in the template
-because the "Adicionar item" helper on the order page clones an already
-rendered row — anything not carried by the widget itself would be lost.
+Bootstrap classes are declared on the widgets rather than in the template so
+every rendered line carries its own styling, wherever it is rendered.
 """
 from django import forms
 
@@ -86,8 +85,13 @@ class OrderItemLineForm(forms.Form):
         return quantity
 
 
+#: The touch picker (#225) writes its own line inputs and sets ``TOTAL_FORMS``
+#: itself, so ``extra`` only sizes the plain fallback. Five blank rows is what
+#: a waiter gets with scripting off — enough for a real round without a
+#: "add another line" button that would need the very JavaScript that is
+#: missing.
 OrderItemLineFormSet = forms.formset_factory(
     OrderItemLineForm,
-    extra=1,
+    extra=5,
     can_delete=False,
 )

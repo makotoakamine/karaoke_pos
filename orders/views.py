@@ -9,6 +9,11 @@ before anything is written, the items' stock counts are decremented, and the
 order with its lines is created. If any single line exceeds stock the whole
 submission is rejected with a clear form error and nothing is changed.
 
+Since #225 the same view also hands the template the raw picker data — the
+open tabs, the sellable catalogue and its categories — so the touch UI can
+filter client-side without a second endpoint. The POST contract is unchanged:
+the picker is a layer over the very same form fields and formset.
+
 Table occupancy is deliberately not touched here (#224): the table is now only
 a hint for the waiter, and ``tables.Table.status`` is owned by the tables
 screens alone.
@@ -24,11 +29,53 @@ from django.urls import reverse, reverse_lazy
 from django.utils.translation import gettext as _
 from django.views.generic import View
 
-from inventory.models import Item
+from inventory.models import Category, Item
 from tabs.models import Tab
 
 from .forms import OrderForm, OrderItemLineFormSet
 from .models import Order, OrderItem
+
+
+def _open_tabs():
+    """The open tabs the picker may offer, alphabetically, with their table.
+
+    Mirrors ``OrderForm.tab``'s queryset exactly: whatever the picker renders
+    has to be something the form would also accept, or tapping a tab would
+    produce an "invalid choice" the waiter cannot explain. The table comes
+    along so each entry can show where the comanda is sitting.
+    """
+    return list(
+        Tab.objects.filter(status=Tab.Status.OPEN)
+        .select_related("table")
+        .order_by("name")
+    )
+
+
+def _sellable_items():
+    """The sellable catalogue, alphabetically, with each item's category.
+
+    Mirrors ``OrderItemLineForm.item``'s queryset: active items with stock
+    above zero, nothing else. The category rides along so the client-side
+    chips can filter the rendered list without another request.
+    """
+    return list(
+        Item.objects.filter(is_active=True, stock__gt=0)
+        .select_related("category")
+        .order_by("name")
+    )
+
+
+def _sellable_categories():
+    """Categories that actually have something sellable in them.
+
+    A chip for an empty category would filter the list down to nothing, so the
+    row only carries categories with at least one active, in-stock item.
+    """
+    return list(
+        Category.objects.filter(items__is_active=True, items__stock__gt=0)
+        .distinct()
+        .order_by("name")
+    )
 
 
 class OrderCreateView(LoginRequiredMixin, View):
@@ -43,6 +90,9 @@ class OrderCreateView(LoginRequiredMixin, View):
             "order_form": order_form,
             "formset": formset,
             "form_errors": form_errors or [],
+            "open_tabs": _open_tabs(),
+            "sellable_items": _sellable_items(),
+            "item_categories": _sellable_categories(),
         }
         return render(request, self.template_name, context, status=status)
 

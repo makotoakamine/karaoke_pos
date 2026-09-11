@@ -59,7 +59,7 @@ A interface está em português brasileiro (pt-br).
   - `tabs/urls.py` – `/comandas/` (lista), `/comandas/nova/` (criar) e
     `/comandas/<pk>/editar/` (editar).
   - `tabs/admin.py` – registra `Tab` no admin do Django como fallback.
-- **`orders/`** – app de pedidos (#109, #224).
+- **`orders/`** – app de pedidos (#109, #224, #225).
   - `orders/models.py` – `Order` (FK obrigatória para `tabs.Tab`, FK opcional
     para `tables.Table`, ambas `PROTECT`, status aberta/encerrada,
     `created_at`) e `OrderItem` (FK para o pedido, FK para `inventory.Item`,
@@ -73,7 +73,10 @@ A interface está em português brasileiro (pt-br).
     linha contra o estoque atual, decrementa o estoque e cria o pedido com
     seus itens. Se qualquer linha excede o estoque, toda a submissão é
     rejeitada e nada muda. O fluxo de pedido não escreve mais em
-    `tables.Table.status`. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
+    `tables.Table.status`. Desde #225 a view também entrega ao template os
+    dados do seletor por toque — `open_tabs`, `sellable_items` e
+    `item_categories` — para a filtragem acontecer no cliente, sem endpoint
+    JSON nem polling; o contrato do POST não mudou. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
     que lista todos os pedidos abertos, do mais antigo ao mais recente, em
     cards grandes do Bootstrap; um endpoint de polling em
     `/pedidos/cozinha/fila/` devolve só o fragmento dos cards e um pequeno
@@ -88,6 +91,15 @@ A interface está em português brasileiro (pt-br).
     `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto).
   - `orders/admin.py` – registra `Order` e `OrderItem` no admin do Django
     como fallback.
+- **`templates/orders/order_form.html`** – a página `/pedidos/novo/` (#225).
+  Renderiza os campos reais do formulário (select de comanda, select de mesa e
+  o formset de linhas) e, quando o JavaScript inicializa, esconde os que
+  substitui e passa a dirigi-los: busca por nome nas comandas abertas, chips
+  de categoria + busca por nome no catálogo, um toque adiciona o item (o
+  segundo toque aumenta a quantidade), resumo com controle de quantidade,
+  remoção e total corrente, e barra de envio fixa no rodapé. Com o
+  JavaScript desligado a mesma página entrega os controles de formulário
+  comuns e envia normalmente.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
@@ -193,9 +205,11 @@ escura do Bootstrap antes do `@import`. As decisões que definem o visual:
 
 As classes Bootstrap dos widgets ficam em `orders/forms.py` e
 `inventory/forms.py` (`form-select`, `form-control`, `form-check-input`),
-não nos templates: a linha extra criada pelo botão "Adicionar item" em
-`/pedidos/novo/` é um clone do HTML já renderizado, então o estilo precisa
-vir do próprio widget.
+não nos templates, para que cada linha renderizada carregue o próprio
+estilo. Em `/pedidos/novo/` não existe mais o botão "Adicionar item" — ele
+dependeria justamente do JavaScript que pode estar desligado; o formset já
+vem com cinco linhas em branco (`extra=5`) e, com o JavaScript ligado, o
+seletor por toque escreve as linhas que quiser.
 
 O tema foi estendido às demais páginas em #204, reaproveitando os utilitários
 de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
@@ -228,6 +242,15 @@ de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
 - `/estoque/categorias/` (#223) — reaproveita a mesma marcação de
   `/estoque/`: cabeçalho com hairline, card plano com borda, `.karaoke-table`
   e `.karaoke-row-actions`. Nenhuma classe nova de CSS foi necessária.
+- `/pedidos/novo/` (#225) — o seletor por toque. Os alvos de toque
+  (`.karaoke-pick` numa grade `.karaoke-pick-grid` de `auto-fill`) são
+  superfícies planas com borda de 1px, no espírito de `.karaoke-nav-card`; a
+  fila de categorias (`.karaoke-chip-row` + `.karaoke-filter-chip`) rola na
+  horizontal em vez de quebrar em várias linhas; o resumo
+  (`.karaoke-summary*`) usa um stepper quadrado (`.karaoke-qty`) e a barra de
+  envio (`.karaoke-submit-bar`) é `position: sticky` no rodapé do card, para
+  o envio ficar sob o polegar sem rolar de volta ao topo. Em 360px a grade
+  cai para uma coluna e as ações da barra dividem a linha inteira.
 
 ### Customizando o tema do Bootstrap
 
