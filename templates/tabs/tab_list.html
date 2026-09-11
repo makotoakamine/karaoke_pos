@@ -54,7 +54,11 @@
             <tbody>
               {% for tab in tabs %}
                 <tr class="{% if tab.status == 'closed' %}karaoke-row-inactive{% endif %}">
-                  <td>{{ tab.name|escape }}</td>
+                  {% comment %}The name is the row's way into the read-only
+                  slip (#226) — orders and running total.{% endcomment %}
+                  <td>
+                    <a href="{% url 'tabs:tab-detail' tab.pk %}" class="fw-semibold">{{ tab.name|escape }}</a>
+                  </td>
                   <td>
                     {% if tab.table %}
                       {{ tab.table.name|escape }}

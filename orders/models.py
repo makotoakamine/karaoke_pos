@@ -14,6 +14,8 @@ The :class:`Order` status starts at ``open``; task #110 will filter on this to
 build the bill/close-flow. ``done`` is reserved for that future step and is
 already present in the choices to keep the column stable from day one.
 """
+from decimal import Decimal
+
 from django.core.validators import MinValueValidator
 from django.db import models
 
@@ -68,6 +70,17 @@ class Order(models.Model):
     def __str__(self) -> str:
         return f"Pedido #{self.pk} – {self.tab.name}"
 
+    @property
+    def subtotal(self) -> Decimal:
+        """What this order costs, from the lines' snapshotted prices.
+
+        Deliberately walks ``self.items.all()`` instead of aggregating in SQL:
+        the tab detail page prefetches the lines, so summing in Python costs no
+        extra query there, and a caller that did not prefetch still gets the
+        right number (at the price of one query).
+        """
+        return sum((line.line_total for line in self.items.all()), Decimal("0.00"))
+
 
 class OrderItem(models.Model):
     """A single line on an :class:`Order`.
@@ -110,3 +123,12 @@ class OrderItem(models.Model):
 
     def __str__(self) -> str:
         return f"{self.quantity}x {self.item.name} @ {self.unit_price}"
+
+    @property
+    def line_total(self) -> Decimal:
+        """Quantity times the *snapshotted* price, never ``item.price``.
+
+        Reading the live inventory price here would silently rewrite every past
+        order the next time someone edits the catalogue.
+        """
+        return self.unit_price * self.quantity
