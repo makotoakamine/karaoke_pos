@@ -383,9 +383,10 @@ h1, h2, h3, h4, h5, h6,
 }
 
 // -- Order form (/pedidos/novo/) ---------------------------------------------
-// Item lines are a two-column grid: a flexible item picker and a compact,
-// fixed-width quantity box, so every row (including the ones cloned by
-// "Adicionar item") lines up.
+// The page is a touch picker (#225) layered over the real form controls. The
+// plain controls below are what renders with scripting off — and what the
+// picker hides once it takes over — so they keep the two-column line grid:
+// a flexible item picker and a compact, fixed-width quantity box.
 #order-lines {
   > thead th,
   > tbody td {
@@ -407,6 +408,303 @@ h1, h2, h3, h4, h5, h6,
 @include media-breakpoint-down(sm) {
   #order-lines .karaoke-line-qty {
     width: 5.5rem;
+  }
+}
+
+// Each step of the order (comanda, mesa, itens, resumo) is its own block,
+// separated by the same hairline the rest of the app uses between sections.
+.karaoke-order-block {
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+
+  &:first-of-type {
+    padding-top: 0;
+  }
+}
+
+// In picker mode the sticky action bar sits over the foot of the form, so the
+// last block needs room to clear it.
+.karaoke-order-enhanced .karaoke-order-block:last-of-type {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+// Search boxes are thumb-sized and full width: they are the first thing the
+// waiter touches in each block.
+.karaoke-search {
+  min-height: 3rem;
+}
+
+// -- Pick lists (tabs and items) ---------------------------------------------
+// A responsive grid of flat bordered targets, in the spirit of
+// `.karaoke-nav-card` but sized for a thumb and dense enough that a phone
+// still shows several at once. `auto-fill` means one column at 360px and more
+// as the viewport allows, with no horizontal overflow at any width.
+.karaoke-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: .5rem;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+// Comandas are wider than items: the name plus its table needs the room.
+.karaoke-pick-grid-tabs {
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  max-height: 18rem;
+}
+
+.karaoke-pick {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+  // Grid items default to `min-width: auto`, which lets a long unbroken item
+  // name push the whole grid past the viewport on a 360px phone.
+  min-width: 0;
+  min-height: 3.5rem;
+  padding: .65rem .75rem;
+  text-align: left;
+  background-color: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+  color: var(--bs-body-color);
+
+  &:hover,
+  &:focus-visible {
+    background-color: rgba(var(--bs-emphasis-color-rgb), .04);
+    border-color: $primary;
+  }
+
+  &.is-selected {
+    border-color: $primary;
+    background-color: rgba(var(--bs-primary-rgb), .12);
+  }
+
+  &.is-selected .karaoke-pick-name {
+    color: #{tint-color($primary, 45%)};
+  }
+}
+
+.karaoke-pick-name {
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--bs-emphasis-color);
+  overflow-wrap: anywhere;
+}
+
+.karaoke-pick-meta {
+  display: block;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+// How many of this item are already on the order, parked in the corner of its
+// tile so the grid does not reflow when it appears.
+.karaoke-pick-count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 1.75rem;
+  padding: .1rem .35rem;
+  font-size: .75rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--bs-body-bg);
+  background-color: $primary;
+}
+
+// -- Category chips ----------------------------------------------------------
+// One row that scrolls sideways on a narrow phone instead of wrapping into a
+// wall of buttons.
+.karaoke-chip-row {
+  display: flex;
+  gap: .5rem;
+  overflow-x: auto;
+  padding-bottom: .35rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.karaoke-filter-chip {
+  flex: 0 0 auto;
+  min-height: 2.5rem;
+  padding: .4rem .9rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--bs-body-color);
+  background-color: rgba(var(--bs-emphasis-color-rgb), .06);
+  border: 1px solid var(--bs-border-color);
+
+  &:hover,
+  &:focus-visible {
+    border-color: $primary;
+    color: #{tint-color($primary, 45%)};
+  }
+
+  &.is-on {
+    color: #{tint-color($primary, 50%)};
+    background-color: rgba(var(--bs-primary-rgb), .16);
+    border-color: $primary;
+  }
+}
+
+// -- Order summary -----------------------------------------------------------
+.karaoke-summary {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.karaoke-summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .6rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.karaoke-summary-label {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.karaoke-summary-controls {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+// Quantity stepper: two square touch targets flanking the number, joined into
+// one control by shared hairlines.
+.karaoke-qty {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--bs-border-color);
+}
+
+.karaoke-qty-btn {
+  width: 2.75rem;
+  min-height: 2.75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--bs-emphasis-color);
+  background-color: var(--bs-tertiary-bg);
+  border: 0;
+
+  &:hover,
+  &:focus-visible {
+    color: #{tint-color($primary, 45%)};
+    background-color: rgba(var(--bs-primary-rgb), .16);
+  }
+}
+
+.karaoke-qty-input.form-control {
+  width: 3.25rem;
+  min-height: 2.75rem;
+  padding-left: .25rem;
+  padding-right: .25rem;
+  text-align: center;
+  font-weight: 600;
+  border: 0;
+  border-left: 1px solid var(--bs-border-color);
+  border-right: 1px solid var(--bs-border-color);
+
+  // The native spinners would steal half the width of an already narrow box.
+  -moz-appearance: textfield;
+
+  &::-webkit-outer-spin-button,
+  &::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+}
+
+.karaoke-summary-remove {
+  min-height: 2.75rem;
+}
+
+// -- Sticky submit bar -------------------------------------------------------
+// On a phone the waiter is deep in the catalogue when the order is done, so
+// the total and the submit ride the bottom of the viewport instead of sitting
+// at the foot of a long form.
+// The negative margins bleed the bar over the card's own padding so it reads
+// as a bar across the foot of the card rather than a floating button row.
+.karaoke-submit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin: 1.25rem -1rem -1rem;
+  padding: .75rem 1rem;
+  background-color: var(--bs-secondary-bg);
+  border-top: 1px solid var(--bs-border-color);
+
+  @include media-breakpoint-up(md) {
+    margin: 1.5rem -1.5rem -1.5rem;
+    padding: .85rem 1.5rem;
+  }
+}
+
+.karaoke-submit-bar-total .karaoke-title {
+  font-size: 1.35rem;
+}
+
+.karaoke-submit-bar-actions {
+  display: flex;
+  gap: .5rem;
+
+  .btn {
+    min-height: 3rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
+
+// Quiet, centred line used for "nothing matches" and "nothing chosen yet".
+.karaoke-empty {
+  padding: 1rem .75rem;
+  color: var(--bs-secondary-color);
+  background-color: var(--bs-tertiary-bg);
+  border: 1px dashed var(--bs-border-color);
+  font-size: .9rem;
+}
+
+@include media-breakpoint-down(sm) {
+  // At 360px the bar has to hold a total and two actions without overflowing:
+  // let the actions take the full row under the total and split the width.
+  .karaoke-submit-bar-actions {
+    flex: 1 1 100%;
+
+    .btn {
+      flex: 1 1 0;
+      padding-left: .5rem;
+      padding-right: .5rem;
+    }
+  }
+
+  // Cap the scrolling lists so the summary and the submit bar stay reachable
+  // without paging through the whole catalogue.
+  .karaoke-pick-grid {
+    max-height: 17rem;
+  }
+
+  .karaoke-pick-grid-tabs {
+    max-height: 14rem;
   }
 }
 

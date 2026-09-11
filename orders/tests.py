@@ -1,15 +1,18 @@
 """Functional tests for the orders app covering the task's acceptance criteria."""
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db.models import ProtectedError
 from django.test import TestCase
-from django.urls import reverse
+from django.urls import resolve, reverse
 from django.utils import timezone
 
 from inventory.models import Category, Item
+from orders import urls as orders_urls
 from orders.forms import OrderForm
 from orders.models import Order, OrderItem
+from orders.views import OrderCreateView
 from tables.models import Table
 from tabs.models import Tab
 
@@ -311,7 +314,12 @@ class OrderCreateViewTests(TestCase):
         self.assertIn("container", body)
 
     def test_page_keeps_plain_select_controls_for_tab_and_table(self):
-        """#225 owns the touch-friendly picker; this round stays a select."""
+        """The picker (#225) is a layer over the real fields, not a substitute.
+
+        The selects are still rendered — the picker only hides the tab one and
+        drives it — so a browser with scripting off gets working controls and
+        the POST contract never changes.
+        """
         body = self.client.get(reverse("orders:order-create")).content.decode()
         self.assertIn('<select name="tab"', body)
         self.assertIn('<select name="table"', body)
@@ -355,6 +363,310 @@ class OrderCreateViewTests(TestCase):
     def test_navbar_links_to_order_create(self):
         resp = self.client.get(reverse("core:home"))
         self.assertContains(resp, reverse("orders:order-create"))
+
+
+class OrderPickerDataTests(TestCase):
+    """What /pedidos/novo/ hands the client for the touch picker (#225).
+
+    The picker itself is JavaScript — tapping, searching and the running
+    summary are exercised in the browser, not here. What *is* server-owned is
+    the data the page renders for that JavaScript to filter: only open tabs,
+    only sellable items, and every category present as filterable data. These
+    tests pin that contract, plus the fact that the plain controls the picker
+    layers over are still rendered for a browser with scripting off.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("garcom", password="secret123")
+
+        cls.drinks = Category.objects.create(name="Bebidas")
+        cls.food = Category.objects.create(name="Porções")
+        cls.empty_category = Category.objects.create(name="Sobremesas")
+
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.seated_tab = Tab.objects.create(name="Ana e amigos", table=cls.table)
+        cls.bar_tab = Tab.objects.create(name="Bruno no balcão")
+        cls.closed_tab = Tab.objects.create(
+            name="Comanda encerrada", status=Tab.Status.CLOSED
+        )
+
+        cls.beer = Item.objects.create(
+            name="Cerveja", category=cls.drinks, price=Decimal("8.50"), stock=10
+        )
+        cls.fries = Item.objects.create(
+            name="Batata frita", category=cls.food, price=Decimal("25.00"), stock=6
+        )
+        cls.retired = Item.objects.create(
+            name="Item aposentado",
+            category=cls.drinks,
+            price=Decimal("5.00"),
+            stock=9,
+            is_active=False,
+        )
+        cls.sold_out = Item.objects.create(
+            name="Item esgotado", category=cls.food, price=Decimal("4.00"), stock=0
+        )
+        # The only item in this category is unsellable, so it must not earn a
+        # chip that would filter the list down to nothing.
+        cls.dessert = Item.objects.create(
+            name="Pudim guardado",
+            category=cls.empty_category,
+            price=Decimal("12.00"),
+            stock=0,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def _body(self):
+        return self.client.get(reverse("orders:order-create")).content.decode()
+
+    # --- acceptance: one page, one view, no mobile-only route ---------------
+
+    def test_the_picker_url_is_the_one_order_page(self):
+        self.assertEqual(reverse("orders:order-create"), "/pedidos/novo/")
+        match = resolve("/pedidos/novo/")
+        self.assertIs(match.func.view_class, OrderCreateView)
+
+    def test_orders_app_exposes_no_second_order_page_or_picker_endpoint(self):
+        """No mobile-only URL and no JSON feed: the page ships its own data."""
+        names = {pattern.name for pattern in orders_urls.urlpatterns}
+        self.assertEqual(
+            names,
+            {"order-create", "kitchen", "kitchen-queue", "order-done"},
+        )
+
+    # --- acceptance: only open tabs are offered, with their table -----------
+
+    def test_open_tabs_are_rendered_as_tappable_targets(self):
+        body = self._body()
+        for tab in (self.seated_tab, self.bar_tab):
+            self.assertIn(f'data-tab-id="{tab.pk}"', body)
+            self.assertIn(f'data-tab-name="{tab.name}"', body)
+
+    def test_closed_tabs_are_not_offered_to_the_picker(self):
+        body = self._body()
+        self.assertNotIn(f'data-tab-id="{self.closed_tab.pk}"', body)
+        self.assertNotIn("Comanda encerrada", body)
+
+    def test_a_tab_closed_after_the_page_was_built_is_gone_on_the_next_load(self):
+        self.bar_tab.close()
+        body = self._body()
+        self.assertNotIn(f'data-tab-id="{self.bar_tab.pk}"', body)
+        self.assertIn(f'data-tab-id="{self.seated_tab.pk}"', body)
+
+    def test_tab_context_is_the_open_tabs_alphabetically(self):
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertEqual(
+            list(resp.context["open_tabs"]), [self.seated_tab, self.bar_tab]
+        )
+
+    def test_tab_entry_shows_the_table_it_is_sitting_at(self):
+        body = self._body()
+        entry = body.split(f'data-tab-id="{self.seated_tab.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn("Mesa 7", entry)
+
+    def test_tab_entry_without_a_table_says_it_has_none(self):
+        body = self._body()
+        entry = body.split(f'data-tab-id="{self.bar_tab.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertNotIn("Mesa 7", entry)
+        self.assertIn("sem mesa", entry)
+
+    def test_a_tab_search_box_is_rendered(self):
+        self.assertIn('id="tab-search"', self._body())
+
+    # --- acceptance: only sellable items reach the item picker ---------------
+
+    def test_only_active_items_with_stock_are_rendered(self):
+        body = self._body()
+        for item in (self.beer, self.fries):
+            self.assertIn(f'data-item-id="{item.pk}"', body)
+        for item in (self.retired, self.sold_out, self.dessert):
+            self.assertNotIn(f'data-item-id="{item.pk}"', body)
+            self.assertNotIn(item.name, body)
+
+    def test_an_item_that_sells_out_leaves_the_picker(self):
+        Item.objects.filter(pk=self.beer.pk).update(stock=0)
+        body = self._body()
+        self.assertNotIn(f'data-item-id="{self.beer.pk}"', body)
+        self.assertIn(f'data-item-id="{self.fries.pk}"', body)
+
+    def test_item_entries_carry_the_data_the_picker_needs(self):
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn('data-item-name="Cerveja"', entry)
+        self.assertIn('data-item-price="8.50"', entry)
+        self.assertIn('data-item-stock="10"', entry)
+        self.assertIn("R$ 8.50", entry)
+
+    def test_item_context_is_the_sellable_catalogue_alphabetically(self):
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertEqual(
+            list(resp.context["sellable_items"]), [self.fries, self.beer]
+        )
+
+    def test_an_item_search_box_is_rendered(self):
+        self.assertIn('id="item-search"', self._body())
+
+    # --- acceptance: categories are present as filterable data ---------------
+
+    def test_every_item_carries_its_category_for_client_side_filtering(self):
+        body = self._body()
+        for item in (self.beer, self.fries):
+            entry = body.split(f'data-item-id="{item.pk}"', 1)[1].split(
+                "</button>", 1
+            )[0]
+            self.assertIn(f'data-item-category="{item.category_id}"', entry)
+            self.assertIn(item.category.name, entry)
+
+    def test_a_chip_is_rendered_for_each_category_with_sellable_items(self):
+        body = self._body()
+        chips = body.split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        for category in (self.drinks, self.food):
+            self.assertIn(f'data-category="{category.pk}"', chips)
+            self.assertIn(category.name, chips)
+
+    def test_a_category_with_nothing_sellable_gets_no_chip(self):
+        body = self._body()
+        self.assertNotIn(f'data-category="{self.empty_category.pk}"', body)
+        self.assertNotIn("Sobremesas", body)
+
+    def test_the_chip_row_offers_a_way_back_to_all_items(self):
+        chips = self._body().split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('data-category="all"', chips)
+        self.assertIn("Todos", chips)
+
+    def test_category_context_is_only_categories_with_sellable_items(self):
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertEqual(
+            list(resp.context["item_categories"]), [self.drinks, self.food]
+        )
+
+    # --- acceptance: summary, total and a reachable submit -------------------
+
+    def test_the_page_renders_a_summary_with_a_running_total(self):
+        body = self._body()
+        self.assertIn('id="order-summary"', body)
+        self.assertIn('id="order-total"', body)
+        self.assertIn('id="order-line-inputs"', body)
+
+    def test_the_submit_rides_a_sticky_bar_so_it_stays_reachable(self):
+        body = self._body()
+        self.assertIn("karaoke-submit-bar", body)
+        bar = body.split("karaoke-submit-bar", 1)[1].split("</form>", 1)[0]
+        self.assertIn('type="submit"', bar)
+
+    # --- acceptance: the page still works with JavaScript off ----------------
+
+    def test_plain_controls_are_rendered_for_a_browser_without_javascript(self):
+        body = self._body()
+        # The real fields, un-hidden in the markup — the script is what hides
+        # them, so with scripting off these are what the waiter gets.
+        self.assertIn('<select name="tab"', body)
+        self.assertIn('<select name="table"', body)
+        self.assertIn('<select name="lines-0-item"', body)
+        self.assertIn('name="lines-0-quantity"', body)
+        self.assertIn('name="lines-TOTAL_FORMS"', body)
+
+    def test_the_plain_path_offers_several_lines_without_javascript(self):
+        """No "add another line" button, because it would need scripting.
+
+        The fallback is sized up front instead: a waiter with scripting off
+        gets five blank rows, enough for a real round in one submission.
+        """
+        resp = self.client.get(reverse("orders:order-create"))
+        body = resp.content.decode()
+        self.assertEqual(len(resp.context["formset"].forms), 5)
+        self.assertIn('<select name="lines-4-item"', body)
+        self.assertNotIn("add-order-line", body)
+
+    def test_the_picker_blocks_start_hidden_and_the_plain_ones_do_not(self):
+        """Progressive enhancement, in that order: plain first, picker on top."""
+        body = self._body()
+        self.assertIn("<div data-order-picker hidden>", body)
+        self.assertIn("<div data-order-plain>", body)
+        self.assertNotIn("data-order-plain hidden", body)
+
+    def test_a_plain_submission_still_creates_the_order(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            {
+                "tab": self.seated_tab.pk,
+                "table": self.table.pk,
+                "lines-TOTAL_FORMS": "1",
+                "lines-INITIAL_FORMS": "0",
+                "lines-MIN_NUM_FORMS": "0",
+                "lines-MAX_NUM_FORMS": "1000",
+                "lines-0-item": self.beer.pk,
+                "lines-0-quantity": "2",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.tab_id, self.seated_tab.pk)
+        self.assertEqual(order.items.get().quantity, 2)
+        self.beer.refresh_from_db()
+        self.assertEqual(self.beer.stock, 8)
+
+    # --- a rejected submission comes back with the picker intact -------------
+
+    def test_a_rejected_submission_re_renders_the_picker_data(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            {
+                "tab": self.seated_tab.pk,
+                "table": "",
+                "lines-TOTAL_FORMS": "1",
+                "lines-INITIAL_FORMS": "0",
+                "lines-MIN_NUM_FORMS": "0",
+                "lines-MAX_NUM_FORMS": "1000",
+                "lines-0-item": self.beer.pk,
+                "lines-0-quantity": "99",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertContains(resp, "Estoque insuficiente", status_code=400)
+        body = resp.content.decode()
+        self.assertIn(f'data-tab-id="{self.seated_tab.pk}"', body)
+        self.assertIn(f'data-item-id="{self.beer.pk}"', body)
+        self.assertIn('data-category="all"', body)
+        # and the rejected line is still in the plain rows the picker reads
+        self.assertIn('value="99"', body)
+        self.assertFalse(Order.objects.exists())
+
+    # --- the picker data is escaped, not injected ---------------------------
+
+    def test_a_tab_name_with_markup_is_escaped_in_the_picker_data(self):
+        Tab.objects.create(name='Grupo "B" <b>x</b>')
+        body = self._body()
+        self.assertNotIn("<b>x</b>", body)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", body)
+
+    # --- acceptance: the styles come from static/scss/main.scss --------------
+
+    def test_the_picker_classes_are_defined_in_the_projects_scss(self):
+        """The compiled CSS is gitignored, so the source is what we can pin."""
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        for selector in (
+            ".karaoke-pick-grid",
+            ".karaoke-pick",
+            ".karaoke-filter-chip",
+            ".karaoke-chip-row",
+            ".karaoke-summary",
+            ".karaoke-qty",
+            ".karaoke-submit-bar",
+            ".karaoke-empty",
+        ):
+            self.assertIn(selector, scss)
 
 
 class OrderModelTests(TestCase):
