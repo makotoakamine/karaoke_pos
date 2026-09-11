@@ -5,13 +5,21 @@ lists the open tabs by default and reaches the closed ones through a filter on
 the same URL (``?status=closed``), so closed tabs are never mixed into the open
 list. Closing a tab is a POST to the overview, mirroring the free/occupied
 toggle :class:`tables.views.TableListView` already uses.
+
+:class:`TabDetailView` is the read-only slip behind each row of that overview
+(#226): it reports the tab's orders and running total and mutates nothing.
 """
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import Prefetch
 from django.http import HttpResponseRedirect
 from django.urls import reverse_lazy
 from django.utils.translation import gettext as _
-from django.views.generic import CreateView, ListView, UpdateView
+from django.views.generic import CreateView, DetailView, ListView, UpdateView
+
+from orders.models import Order, OrderItem
 
 from .forms import TabForm
 from .models import Tab
@@ -61,6 +69,50 @@ class TabListView(LoginRequiredMixin, ListView):
                     request, _('Comanda "{}" fechada.').format(tab.name)
                 )
         return HttpResponseRedirect(reverse_lazy("tabs:tab-list"))
+
+
+class TabDetailView(LoginRequiredMixin, DetailView):
+    """Read-only slip: every order on the tab and what it has racked up.
+
+    Strictly a report — it renders no form, no button and no link that changes
+    anything, so a closed tab is served exactly like an open one. Closing,
+    editing and settling stay on their own screens.
+    """
+
+    model = Tab
+    template_name = "tabs/tab_detail.html"
+    context_object_name = "tab"
+
+    def get_queryset(self):
+        """The tab, its table, its orders and their lines in three queries.
+
+        The nested :class:`~django.db.models.Prefetch` is what keeps the page
+        flat as orders pile up: one query for the tab (its table joined in),
+        one for the orders and one for every line of every order with the
+        item name joined in — never one per order or per line.
+
+        The orders are ordered oldest-first here rather than in the template
+        because :class:`orders.models.Order` defaults to newest-first, which
+        is right for the kitchen queue and wrong for reading a slip top-down.
+        """
+        lines = OrderItem.objects.select_related("item").order_by("item__name")
+        orders = Order.objects.order_by("created_at", "pk").prefetch_related(
+            Prefetch("items", queryset=lines)
+        )
+        return Tab.objects.select_related("table").prefetch_related(
+            Prefetch("orders", queryset=orders)
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        orders = list(self.object.orders.all())
+        context["orders"] = orders
+        # Sum of the order subtotals, i.e. of quantity x snapshotted price
+        # across every line. An empty tab totals 0,00 rather than nothing, so
+        # the template never has to render a blank figure.
+        context["total"] = sum((order.subtotal for order in orders), Decimal("0.00"))
+        context["title"] = self.object.name
+        return context
 
 
 class TabCreateView(LoginRequiredMixin, CreateView):
