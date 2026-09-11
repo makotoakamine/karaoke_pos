@@ -33,6 +33,12 @@
         </a>
       </div>
       <div class="col-12 col-sm-6 col-lg-3">
+        <a href="{% url 'tabs:tab-list' %}" class="karaoke-nav-card">
+          <h2 class="karaoke-title">{% trans "Comandas" %}</h2>
+          <p class="karaoke-micro mb-0">{% trans "Comandas abertas e fechadas" %}</p>
+        </a>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
         <a href="{% url 'orders:order-create' %}" class="karaoke-nav-card">
           <h2 class="karaoke-title">{% trans "Novo pedido" %}</h2>
           <p class="karaoke-micro mb-0">{% trans "Lançar itens em uma mesa" %}</p>

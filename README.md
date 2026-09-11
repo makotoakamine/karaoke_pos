@@ -27,6 +27,23 @@ A interface está em português brasileiro (pt-br).
   - `tables/urls.py` – `/mesas/` (lista), `/mesas/nova/` (criar) e
     `/mesas/<pk>/editar/` (editar).
   - `tables/admin.py` – registra `Table` no admin do Django como fallback.
+- **`tabs/`** – app de comandas (#222).
+  - `tabs/models.py` – `Tab` (nome livre, status aberta/fechada, FK opcional
+    para `tables.Table` apenas como referência de entrega, `created_at`,
+    `updated_at` e `closed_at`). Não há `is_active`: "fechada" **é** o estado
+    de aposentadoria da comanda. Duas comandas abertas não podem ter o mesmo
+    nome — a regra é validação no `clean()` do modelo (e não uma coluna
+    `unique`) justamente para que o nome volte a ficar livre depois que a
+    comanda anterior for fechada. A FK usa `SET_NULL`, então desativar ou
+    excluir a mesa não leva a comanda junto.
+  - `tabs/views.py` – visão geral (login required) que lista as comandas
+    abertas por padrão e alcança as fechadas pelo filtro `?status=closed` na
+    mesma tela, mais criar/editar via class-based views. Fechar uma comanda é
+    um POST para a própria lista, no mesmo padrão do toggle livre/ocupada de
+    `/mesas/`; reabrir está fora de escopo.
+  - `tabs/urls.py` – `/comandas/` (lista), `/comandas/nova/` (criar) e
+    `/comandas/<pk>/editar/` (editar).
+  - `tabs/admin.py` – registra `Tab` no admin do Django como fallback.
 - **`orders/`** – app de pedidos (#109).
   - `orders/models.py` – `Order` (FK para `tables.Table`, status
     aberta/encerrada, `created_at`) e `OrderItem` (FK para o pedido, FK para
@@ -54,8 +71,8 @@ A interface está em português brasileiro (pt-br).
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
-  visitantes deslogados e "Início/Mesas/Pedidos/Cozinha/Estoque/Sair" para
-  autenticados.
+  visitantes deslogados e "Início/Mesas/Comandas/Pedidos/Cozinha/Estoque/Sair"
+  para autenticados.
 - **`templates/core/landing.html`** – landing page com a marca do restaurante e
   o formulário de login (username/senha) estilizado pelo Bootstrap.
 - **`templates/core/home.html`** – home autenticada (stub) que futuros painéis
@@ -167,7 +184,14 @@ de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
 - `/` (landing) — um único card plano com a marca, rótulos em caixa alta e
   botão "Entrar" de largura total.
 - `/home/` — grade de cards de navegação (`.karaoke-nav-card`) para Estoque,
-  Mesas, Novo pedido e Cozinha; o logout é um botão outline no cabeçalho.
+  Mesas, Comandas, Novo pedido e Cozinha; o logout é um botão outline no
+  cabeçalho.
+- `/comandas/` — mesma tabela escura, com chips de status, marcador
+  "— sem mesa" para comandas sem mesa e o filtro Abertas/Fechadas no
+  cabeçalho. A tela não introduziu CSS novo: reaproveita
+  `.karaoke-page-header`, `.karaoke-table`, `.karaoke-chip*`,
+  `.karaoke-row-actions-split`, `.karaoke-row-inactive` e
+  `.karaoke-btn-ghost`.
 - `/mesas/` — mesma tabela escura de `/estoque/`, com badges quadrados e
   ações de largura uniforme (`.karaoke-row-actions-split`, necessário porque
   o toggle de status é um `<form>` e "Editar" um link).
