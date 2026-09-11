@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-tabs-list">
+  <div class="container py-4">
+    <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <h1 class="h3 mb-0">{% trans "Comandas" %}</h1>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        {% comment %}Open and closed share this one screen; the filter swaps the
+        listing instead of mixing the two.{% endcomment %}
+        <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Filtrar comandas' %}">
+          <a href="{% url 'tabs:tab-list' %}"
+             class="btn {% if showing_closed %}btn-outline-secondary karaoke-btn-ghost{% else %}btn-primary{% endif %}">
+            {% trans "Abertas" %}
+          </a>
+          <a href="{% url 'tabs:tab-list' %}?status=closed"
+             class="btn {% if showing_closed %}btn-primary{% else %}btn-outline-secondary karaoke-btn-ghost{% endif %}">
+            {% trans "Fechadas" %}
+          </a>
+        </div>
+        <a href="{% url 'tabs:tab-create' %}" class="btn btn-primary">
+          {% trans "Nova comanda" %}
+        </a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show py-2" role="alert">
+          {{ message|escape }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card border">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover karaoke-table align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{% trans "Nome" %}</th>
+                <th scope="col">{% trans "Mesa" %}</th>
+                <th scope="col" class="text-center">{% trans "Status" %}</th>
+                {% if showing_closed %}
+                  <th scope="col" class="text-end">{% trans "Fechada em" %}</th>
+                {% endif %}
+                <th scope="col" class="text-end">{% trans "Ações" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for tab in tabs %}
+                <tr class="{% if tab.status == 'closed' %}karaoke-row-inactive{% endif %}">
+                  <td>{{ tab.name|escape }}</td>
+                  <td>
+                    {% if tab.table %}
+                      {{ tab.table.name|escape }}
+                    {% else %}
+                      <span class="text-body-secondary">&mdash; {% trans "sem mesa" %}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">
+                    {% if tab.status == 'open' %}
+                      <span class="badge karaoke-chip karaoke-chip-on">{% trans "Aberta" %}</span>
+                    {% else %}
+                      <span class="badge karaoke-chip karaoke-chip-off">{% trans "Fechada" %}</span>
+                    {% endif %}
+                  </td>
+                  {% if showing_closed %}
+                    <td class="text-end karaoke-micro">{{ tab.closed_at|date:"d/m/Y H:i" }}</td>
+                  {% endif %}
+                  <td class="text-end">
+                    {% comment %}"Fechar" is a form and "Editar" a link, so they
+                    cannot share a .btn-group; the split variant lays them out
+                    flush and at a shared width instead.{% endcomment %}
+                    <div class="karaoke-row-actions-split">
+                      {% if tab.status == 'open' %}
+                        <form method="post" action="{% url 'tabs:tab-list' %}">
+                          {% csrf_token %}
+                          <input type="hidden" name="tab_id" value="{{ tab.pk }}">
+                          <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Fechar" %}</button>
+                        </form>
+                      {% endif %}
+                      <a href="{% url 'tabs:tab-update' tab.pk %}"
+                         class="btn btn-sm btn-outline-secondary karaoke-btn-ghost">{% trans "Editar" %}</a>
+                    </div>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="{% if showing_closed %}5{% else %}4{% endif %}"
+                      class="text-center text-body-secondary py-4">
+                    {% if showing_closed %}
+                      {% trans "Nenhuma comanda fechada ainda." %}
+                    {% else %}
+                      {% trans "Nenhuma comanda aberta. Clique em \"Nova comanda\" para começar." %}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
