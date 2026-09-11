@@ -44,25 +44,30 @@ A interface está em português brasileiro (pt-br).
   - `tabs/urls.py` – `/comandas/` (lista), `/comandas/nova/` (criar) e
     `/comandas/<pk>/editar/` (editar).
   - `tabs/admin.py` – registra `Tab` no admin do Django como fallback.
-- **`orders/`** – app de pedidos (#109).
-  - `orders/models.py` – `Order` (FK para `tables.Table`, status
-    aberta/encerrada, `created_at`) e `OrderItem` (FK para o pedido, FK para
-    `inventory.Item`, `quantity`, `unit_price` com snapshot do preço no
-    momento do pedido).
+- **`orders/`** – app de pedidos (#109, #224).
+  - `orders/models.py` – `Order` (FK obrigatória para `tabs.Tab`, FK opcional
+    para `tables.Table`, ambas `PROTECT`, status aberta/encerrada,
+    `created_at`) e `OrderItem` (FK para o pedido, FK para `inventory.Item`,
+    `quantity`, `unit_price` com snapshot do preço no momento do pedido). O
+    pedido pertence à comanda; a mesa é só contexto de entrega e pode ficar
+    vazia.
   - `orders/views.py` – página de abertura de pedido (login required) com
-    seleção de mesa + formset de itens; o POST roda numa transação única,
-    valida o estoque de cada linha contra o estoque atual, decrementa o
-    estoque, cria o pedido com seus itens e marca a mesa como ocupada. Se
-    qualquer linha excede o estoque, toda a submissão é rejeitada e nada
-    muda. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
+    seleção de comanda (obrigatória, só comandas abertas) + mesa (opcional) +
+    formset de itens; o POST roda numa transação única, relê a comanda com
+    `select_for_update` e recusa comandas fechadas, valida o estoque de cada
+    linha contra o estoque atual, decrementa o estoque e cria o pedido com
+    seus itens. Se qualquer linha excede o estoque, toda a submissão é
+    rejeitada e nada muda. O fluxo de pedido não escreve mais em
+    `tables.Table.status`. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
     que lista todos os pedidos abertos, do mais antigo ao mais recente, em
     cards grandes do Bootstrap; um endpoint de polling em
     `/pedidos/cozinha/fila/` devolve só o fragmento dos cards e um pequeno
     JavaScript no template troca o conteúdo a cada ~5 segundos, sem
     websockets nem framework JS. O botão "Pronto" em cada pedido faz POST
     (com CSRF) para `/pedidos/cozinha/<pk>/pronto/` e muda o status para
-    "encerrada"; pedidos encerrados nunca aparecem na tela. A ocupação das
-    mesas não é tocada aqui.
+    "encerrada"; pedidos encerrados nunca aparecem na tela. Nem a comanda nem
+    a ocupação das mesas são tocadas aqui. O card da cozinha usa o nome da
+    comanda como título e mostra a mesa embaixo só quando o pedido tem uma.
   - `orders/urls.py` – `/pedidos/novo/` (abrir pedido), `/pedidos/cozinha/`
     (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards) e
     `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto).

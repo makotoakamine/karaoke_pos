@@ -8,8 +8,16 @@
       {% with waiting=order.created_at|minutes_since %}
         <div class="col-12 col-md-6 col-xl-4" data-order-pk="{{ order.pk }}">
           <div class="card h-100 kitchen-card{% if waiting >= 30 %} kitchen-card-overdue{% elif waiting >= 15 %} kitchen-card-late{% endif %}">
+            {% comment %}The headline is the tab the order belongs to; the
+            table is only where to deliver it, so it rides underneath and only
+            when the order actually has one (#224).{% endcomment %}
             <div class="kitchen-card-head">
-              <h2 class="karaoke-title">{{ order.table.name|escape }}</h2>
+              <div class="kitchen-card-heading">
+                <h2 class="karaoke-title">{{ order.tab.name|escape }}</h2>
+                {% if order.table %}
+                  <p class="kitchen-card-table">{{ order.table.name|escape }}</p>
+                {% endif %}
+              </div>
               <span class="badge karaoke-chip">#{{ order.pk }}</span>
             </div>
 

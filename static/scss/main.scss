@@ -432,6 +432,17 @@ h1, h2, h3, h4, h5, h6,
   font-size: 1.5rem;
 }
 
+// The tab name is the headline; the table, when the order has one, sits under
+// it as a quiet secondary line so it never competes with the comanda.
+.kitchen-card-heading {
+  min-width: 0;
+}
+
+.kitchen-card-table {
+  @include karaoke-micro-label;
+  margin: .15rem 0 0;
+}
+
 // Elapsed time reads as a micro-label and escalates with age, so a ticket that
 // has been sitting too long is obvious from across the room: accent edge up to
 // 15 minutes, amber past 15, red past 30.
