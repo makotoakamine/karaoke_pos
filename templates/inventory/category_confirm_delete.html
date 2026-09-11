@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-inventory-delete">
+  <div class="container py-4">
+    <div class="row justify-content-center">
+      <div class="col-lg-6 col-md-8">
+        <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <h1 class="h3 mb-0">{% trans "Excluir categoria" %}</h1>
+        </div>
+
+        <div class="card border">
+          <div class="card-body p-4">
+            {% if item_count %}
+              {% comment %}Item.category is PROTECT: say so before the click
+              instead of letting the POST bounce off the database.{% endcomment %}
+              <div class="alert alert-danger py-2" role="alert">
+                {% blocktrans count counter=item_count trimmed %}
+                  Esta categoria não pode ser excluída: há {{ counter }} item vinculado a ela.
+                {% plural %}
+                  Esta categoria não pode ser excluída: há {{ counter }} itens vinculados a ela.
+                {% endblocktrans %}
+              </div>
+              <p class="h4 mb-4">{{ object.name|escape }}</p>
+              <p class="mb-0 text-body-secondary">
+                {% trans "Mova esses itens para outra categoria (ou exclua-os) e tente de novo." %}
+              </p>
+              <div class="karaoke-actions">
+                <a href="{% url 'inventory:category-list' %}" class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Voltar" %}</a>
+                <a href="{% url 'inventory:item-list' %}" class="btn btn-primary">{% trans "Ver itens" %}</a>
+              </div>
+            {% else %}
+              <p class="mb-1">{% trans "Tem certeza que deseja excluir permanentemente a categoria abaixo?" %}</p>
+              <p class="h4 mb-4">{{ object.name|escape }}</p>
+              <dl class="row karaoke-deflist mb-0">
+                <dt class="col-sm-4">{% trans "Itens vinculados" %}</dt>
+                <dd class="col-sm-8 mb-0">{{ item_count }}</dd>
+              </dl>
+
+              <form method="post">
+                {% csrf_token %}
+                <div class="karaoke-actions">
+                  <a href="{% url 'inventory:category-list' %}" class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Cancelar" %}</a>
+                  <button type="submit" class="btn btn-danger">{% trans "Excluir" %}</button>
+                </div>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

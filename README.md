@@ -13,12 +13,27 @@ A interface está em português brasileiro (pt-br).
   - `core/views.py` – `LandingLoginView` (envolve `LoginView`) em `/` e
     `HomeView` (stub autenticado) em `/home/`.
   - `core/urls.py` – `/` (login), `/home/` (home) e `/logout/`.
-- **`inventory/`** – app de catálogo de itens vendáveis (#107).
-  - `inventory/models.py` – `Item` (nome, preço, estoque, `is_active`).
-  - `inventory/views.py` – CRUD de itens (login required) via class-based views.
+- **`inventory/`** – app de catálogo de itens vendáveis (#107) e das suas
+  categorias (#223).
+  - `inventory/models.py` – `Category` (nome único, ordenação alfabética) e
+    `Item` (nome, FK obrigatória para `Category`, preço, estoque,
+    `is_active`). A FK é `PROTECT`: uma categoria com itens vinculados não
+    pode ser excluída, mesma convenção usada entre `OrderItem` e `Item`.
+  - `inventory/views.py` – CRUD de itens e de categorias (login required) via
+    class-based views. A exclusão de categoria em uso é recusada com uma
+    mensagem legível em vez de estourar um erro.
   - `inventory/urls.py` – `/estoque/` (lista), `/estoque/novo/` (criar),
-    `/estoque/<pk>/editar/` (editar) e `/estoque/<pk>/excluir/` (excluir).
-  - `inventory/admin.py` – registra `Item` no admin do Django como fallback.
+    `/estoque/<pk>/editar/` (editar) e `/estoque/<pk>/excluir/` (excluir);
+    `/estoque/categorias/` (lista), `/estoque/categorias/nova/` (criar),
+    `/estoque/categorias/<pk>/editar/` (editar) e
+    `/estoque/categorias/<pk>/excluir/` (excluir). As telas de categoria são
+    alcançadas pelo botão "Categorias" na página de estoque — a navbar não
+    ganhou entrada nova.
+  - `inventory/migrations/0003_seed_starter_categories.py` – data migration
+    que semeia as categorias iniciais ("bebidas não alcoólicas", "bebidas
+    alcoólicas" e "comidas"), para que um clone novo já suba usável.
+  - `inventory/admin.py` – registra `Item` e `Category` no admin do Django
+    como fallback.
 - **`tables/`** – app de gestão de mesas (#108).
   - `tables/models.py` – `Table` (nome/número único, lugares, status
     livre/ocupada, `is_active`).
@@ -205,6 +220,9 @@ de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
 - Formulários de item/mesa e a confirmação de exclusão — card plano, rótulos
   em caixa alta e barra de ações alinhada à direita (`Cancelar` outline,
   ação destrutiva em `btn-danger`).
+- `/estoque/categorias/` (#223) — reaproveita a mesma marcação de
+  `/estoque/`: cabeçalho com hairline, card plano com borda, `.karaoke-table`
+  e `.karaoke-row-actions`. Nenhuma classe nova de CSS foi necessária.
 
 ### Customizando o tema do Bootstrap
 

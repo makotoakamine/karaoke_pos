@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from inventory.models import Item
+from inventory.models import Category, Item
 from orders.models import Order, OrderItem
 from tables.models import Table
 
@@ -16,17 +16,19 @@ class OrderCreateViewTests(TestCase):
     def setUpTestData(cls):
         cls.user = User.objects.create_user("admin", password="secret123")
         cls.table = Table.objects.create(name="Mesa 1", seats=4)
+        cls.category = Category.objects.create(name="bebidas")
         cls.item = Item.objects.create(
-            name="Cerveja", price=Decimal("8.50"), stock=10
+            name="Cerveja", category=cls.category, price=Decimal("8.50"), stock=10
         )
         cls.inactive = Item.objects.create(
             name="Desativado",
+            category=cls.category,
             price=Decimal("2.00"),
             stock=5,
             is_active=False,
         )
         cls.zero = Item.objects.create(
-            name="Sem estoque", price=Decimal("3.00"), stock=0
+            name="Sem estoque", category=cls.category, price=Decimal("3.00"), stock=0
         )
 
     def setUp(self):
@@ -261,7 +263,13 @@ class OrderModelTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.table = Table.objects.create(name="Mesa 2", seats=2)
-        cls.item = Item.objects.create(name="Refrigerante", price=Decimal("6.00"), stock=4)
+        cls.category = Category.objects.create(name="bebidas")
+        cls.item = Item.objects.create(
+            name="Refrigerante",
+            category=cls.category,
+            price=Decimal("6.00"),
+            stock=4,
+        )
 
     def test_new_order_defaults_open(self):
         order = Order.objects.create(table=self.table)
@@ -291,11 +299,12 @@ class KitchenViewTests(TestCase):
         cls.user = User.objects.create_user("admin", password="secret123")
         cls.table_a = Table.objects.create(name="Mesa 1", seats=4)
         cls.table_b = Table.objects.create(name="Mesa 2", seats=2)
+        cls.category = Category.objects.create(name="bebidas")
         cls.item = Item.objects.create(
-            name="Cerveja", price=Decimal("8.50"), stock=20
+            name="Cerveja", category=cls.category, price=Decimal("8.50"), stock=20
         )
         cls.item2 = Item.objects.create(
-            name="Porção", price=Decimal("25.00"), stock=10
+            name="Porção", category=cls.category, price=Decimal("25.00"), stock=10
         )
 
     def setUp(self):
