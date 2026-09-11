@@ -33,6 +33,16 @@
                 {% for error in form.name.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
               </div>
 
+              {% comment %}A category is required on every item (#223); the
+              picker is a plain <select> rendered by the form so the choices and
+              the "Selecione a categoria" placeholder stay in one place.{% endcomment %}
+              <div class="mb-3{% if form.category.errors %} karaoke-field-invalid{% endif %}">
+                <label for="{{ form.category.id_for_label }}" class="form-label">{{ form.category.label }}</label>
+                {{ form.category }}
+                <div class="form-text">{{ form.category.help_text|escape }}</div>
+                {% for error in form.category.errors %}<div class="invalid-feedback d-block">{{ error|escape }}</div>{% endfor %}
+              </div>
+
               <div class="row g-3">
                 <div class="col-sm-6">
                   <label for="id_price" class="form-label">{{ form.price.label }}</label>

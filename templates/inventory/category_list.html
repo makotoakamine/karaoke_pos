@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
+
+{% block content %}
+<section class="karaoke-inventory-list">
+  <div class="container py-4">
+    <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <h1 class="h3 mb-0">{% trans "Categorias" %}</h1>
+      <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'inventory:item-list' %}" class="btn btn-outline-secondary karaoke-btn-ghost">
+          {% trans "Voltar ao estoque" %}
+        </a>
+        <a href="{% url 'inventory:category-create' %}" class="btn btn-primary">
+          {% trans "Nova categoria" %}
+        </a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show py-2" role="alert">
+          {{ message|escape }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card border">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover karaoke-table align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{% trans "Nome" %}</th>
+                <th scope="col" class="text-end">{% trans "Itens" %}</th>
+                <th scope="col" class="text-end">{% trans "Ações" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for category in categories %}
+                <tr>
+                  <td>{{ category.name|escape }}</td>
+                  <td class="text-end">{{ category.item_count }}</td>
+                  <td class="text-end">
+                    {% comment %}Same btn-group/min-width treatment as the item
+                    rows so the two listings line up column for column.{% endcomment %}
+                    <div class="btn-group btn-group-sm karaoke-row-actions" role="group"
+                         aria-label="{% trans 'Ações da categoria' %}">
+                      <a href="{% url 'inventory:category-update' category.pk %}"
+                         class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Editar" %}</a>
+                      <a href="{% url 'inventory:category-delete' category.pk %}"
+                         class="btn btn-outline-danger">{% trans "Excluir" %}</a>
+                    </div>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="3" class="text-center text-body-secondary py-4">
+                    {% trans "Nenhuma categoria cadastrada. Clique em \"Nova categoria\" para começar." %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -17,6 +17,8 @@
             <p class="mb-1">{% trans "Tem certeza que deseja excluir permanentemente o item abaixo?" %}</p>
             <p class="h4 mb-4">{{ object.name|escape }}</p>
             <dl class="row karaoke-deflist mb-0">
+              <dt class="col-sm-4">{% trans "Categoria" %}</dt>
+              <dd class="col-sm-8">{{ object.category.name|escape }}</dd>
               <dt class="col-sm-4">{% trans "Preço" %}</dt>
               <dd class="col-sm-8">R$ {{ object.price|stringformat:".2f" }}</dd>
               <dt class="col-sm-4">{% trans "Estoque" %}</dt>

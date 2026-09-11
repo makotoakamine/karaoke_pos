@@ -8,9 +8,16 @@
   <div class="container py-4">
     <div class="karaoke-page-header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <h1 class="h3 mb-0">{% trans "Estoque" %}</h1>
-      <a href="{% url 'inventory:item-create' %}" class="btn btn-primary">
-        {% trans "Novo item" %}
-      </a>
+      {% comment %}The categories screen has no navbar slot, so the stock page
+      is how staff reach it.{% endcomment %}
+      <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'inventory:category-list' %}" class="btn btn-outline-secondary karaoke-btn-ghost">
+          {% trans "Categorias" %}
+        </a>
+        <a href="{% url 'inventory:item-create' %}" class="btn btn-primary">
+          {% trans "Novo item" %}
+        </a>
+      </div>
     </div>
 
     {% if messages %}
@@ -29,6 +36,7 @@
             <thead>
               <tr>
                 <th scope="col">{% trans "Nome" %}</th>
+                <th scope="col">{% trans "Categoria" %}</th>
                 <th scope="col" class="text-end">{% trans "Preço" %}</th>
                 <th scope="col" class="text-end">{% trans "Estoque" %}</th>
                 <th scope="col" class="text-center">{% trans "Ativo" %}</th>
@@ -44,6 +52,7 @@
                       <span class="badge karaoke-chip karaoke-chip-off ms-1">{% trans "inativo" %}</span>
                     {% endif %}
                   </td>
+                  <td>{{ item.category.name|escape }}</td>
                   <td class="text-end">R$ {{ item.price|stringformat:".2f" }}</td>
                   <td class="text-end">{{ item.stock }}</td>
                   <td class="text-center">
@@ -67,7 +76,7 @@
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan="5" class="text-center text-body-secondary py-4">
+                  <td colspan="6" class="text-center text-body-secondary py-4">
                     {% trans "Nenhum item cadastrado. Clique em \"Novo item\" para começar." %}
                   </td>
                 </tr>
