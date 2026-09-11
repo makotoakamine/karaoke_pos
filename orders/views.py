@@ -1,13 +1,17 @@
 """Views for the orders app.
 
 The order-taking page (``/pedidos/novo/``) is the app's central waiter flow.
-It renders a table selector plus a formset of item lines. On POST the whole
-submission runs inside a single transaction: each requested quantity is
-validated against current stock before anything is written, the items'
-stock counts are decremented, the order with its lines is created, and the
-chosen table's status is flipped to occupied. If any single line exceeds
-stock the whole submission is rejected with a clear form error and nothing
-is changed.
+It renders a tab selector — plus an optional table, purely as delivery
+context — and a formset of item lines. On POST the whole submission runs
+inside a single transaction: the chosen tab is re-read under a row lock and
+must still be open, each requested quantity is validated against current stock
+before anything is written, the items' stock counts are decremented, and the
+order with its lines is created. If any single line exceeds stock the whole
+submission is rejected with a clear form error and nothing is changed.
+
+Table occupancy is deliberately not touched here (#224): the table is now only
+a hint for the waiter, and ``tables.Table.status`` is owned by the tables
+screens alone.
 """
 from typing import Iterable, Tuple
 
@@ -21,7 +25,7 @@ from django.utils.translation import gettext as _
 from django.views.generic import View
 
 from inventory.models import Item
-from tables.models import Table
+from tabs.models import Tab
 
 from .forms import OrderForm, OrderItemLineFormSet
 from .models import Order, OrderItem
@@ -54,7 +58,8 @@ class OrderCreateView(LoginRequiredMixin, View):
         if not order_form.is_valid() or not formset.is_valid():
             return self._render(request, order_form, formset, status=400)
 
-        table = order_form.cleaned_data["table"]
+        tab = order_form.cleaned_data["tab"]
+        table = order_form.cleaned_data.get("table")
 
         # Collect non-empty lines (the formset always renders at least one
         # extra blank row; an empty item field means the waiter did not fill
@@ -85,10 +90,11 @@ class OrderCreateView(LoginRequiredMixin, View):
         form_errors: list[str] = []
         try:
             with transaction.atomic():
-                # Re-fetch the selected table inside the transaction with a
-                # row lock so the occupancy flip is the row we mutate.
-                table = Table.objects.select_for_update().get(
-                    pk=table.pk, is_active=True
+                # Re-fetch the selected tab inside the transaction with a row
+                # lock: a comanda closed between render and submit must not
+                # collect another round.
+                tab = Tab.objects.select_for_update().get(
+                    pk=tab.pk, status=Tab.Status.OPEN
                 )
 
                 # Lock each item row before validating the demand so two
@@ -118,10 +124,11 @@ class OrderCreateView(LoginRequiredMixin, View):
                             ).format(item.name, total_qty, item.stock)
                         )
 
-                # All lines validated — write the order, snapshot the prices,
-                # decrement stock using the locked instances, and occupy the
-                # table.
+                # All lines validated — write the order against the tab,
+                # snapshot the prices and decrement stock using the locked
+                # instances. The table rides along untouched, if there is one.
                 order = Order.objects.create(
+                    tab=tab,
                     table=table,
                     status=Order.Status.OPEN,
                 )
@@ -135,11 +142,8 @@ class OrderCreateView(LoginRequiredMixin, View):
                     locked = items_by_pk[item.pk]
                     locked.stock -= quantity
                     locked.save(update_fields=["stock", "updated_at"])
-
-                table.status = Table.Status.OCCUPIED
-                table.save(update_fields=["status", "updated_at"])
-        except Table.DoesNotExist:
-            order_form.add_error("table", _("Mesa inválida ou inativa."))
+        except Tab.DoesNotExist:
+            order_form.add_error("tab", _("Comanda inválida ou já fechada."))
             return self._render(request, order_form, formset, status=400)
         except ValueError as exc:
             form_errors.append(str(exc))
@@ -149,15 +153,15 @@ class OrderCreateView(LoginRequiredMixin, View):
 
         messages.success(
             request,
-            _('Pedido #{} registrado para a mesa "{}" — estoque atualizado.').format(
-                order.pk, table.name
+            _('Pedido #{} registrado na comanda "{}" — estoque atualizado.').format(
+                order.pk, tab.name
             ),
         )
         return redirect(reverse_lazy("orders:order-create"))
 
 
 def _open_orders_queryset():
-    """Open orders, oldest first, with their table and items prefetched.
+    """Open orders, oldest first, with their tab, table and items prefetched.
 
     The kitchen screen works top-down so the oldest ticket is always at the
     top of the pile. Prefetching the items and the item's name keeps the
@@ -165,7 +169,7 @@ def _open_orders_queryset():
     """
     return (
         Order.objects.filter(status=Order.Status.OPEN)
-        .select_related("table")
+        .select_related("tab", "table")
         .prefetch_related("items__item")
         .order_by("created_at")
     )
@@ -215,8 +219,8 @@ class OrderDoneView(LoginRequiredMixin, View):
     """Flip a single order's status from ``open`` to ``done``.
 
     Reached from the ``Done`` button on each kitchen card. Only the
-    ``status`` field is updated; the table's occupancy is intentionally left
-    alone (freeing tables is out of scope for this task). Unknown or already
+    ``status`` field is updated; neither the tab nor the table is touched
+    (closing a comanda is its own action on /comandas/). Unknown or already
     done orders are treated as gone and silently redirect back to the screen
     so a stale poll cannot raise a 404 in the kitchen's face.
     """

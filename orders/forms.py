@@ -1,7 +1,8 @@
 """Forms for the orders app.
 
-The order-taking page is a single form that combines a table selector with a
-formset of item lines. Each line carries an item and a quantity. The view is
+The order-taking page is a single form that combines a tab selector (plus an
+optional table, which is only delivery context for the waiter) with a formset
+of item lines. Each line carries an item and a quantity. The view is
 responsible for validating quantities against current stock inside the
 submission transaction, so this form only enforces per-line sanity (quantity
 is a positive integer, item is one of the active-with-stock queryset).
@@ -14,18 +15,35 @@ from django import forms
 
 from inventory.models import Item
 from tables.models import Table
+from tabs.models import Tab
 
 
 class OrderForm(forms.Form):
-    """Top-level form: choose the table the order is placed against."""
+    """Top-level form: the tab the order is placed against, plus its table.
 
+    The tab is what the order actually belongs to, so it is mandatory and only
+    *open* tabs are offered — billing against a closed comanda is exactly the
+    mistake this queryset exists to prevent. The table is optional: it only
+    tells the waiter where to deliver, and an order taken at the bar has none.
+    """
+
+    tab = forms.ModelChoiceField(
+        queryset=Tab.objects.filter(status=Tab.Status.OPEN).order_by("name"),
+        label="Comanda",
+        empty_label="Selecione a comanda",
+        widget=forms.Select(attrs={"class": "form-select"}),
+        error_messages={
+            "required": "Selecione a comanda para o pedido.",
+            "invalid_choice": "Comanda inválida ou já fechada.",
+        },
+    )
     table = forms.ModelChoiceField(
         queryset=Table.objects.filter(is_active=True).order_by("name"),
         label="Mesa",
-        empty_label="Selecione a mesa",
+        required=False,
+        empty_label="Sem mesa (opcional)",
         widget=forms.Select(attrs={"class": "form-select"}),
         error_messages={
-            "required": "Selecione a mesa para o pedido.",
             "invalid_choice": "Mesa inválida.",
         },
     )

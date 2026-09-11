@@ -6,10 +6,10 @@ from .models import Order, OrderItem
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("id", "table", "status", "created_at")
+    list_display = ("id", "tab", "table", "status", "created_at")
     list_filter = ("status",)
-    search_fields = ("table__name",)
-    list_select_related = ("table",)
+    search_fields = ("tab__name", "table__name")
+    list_select_related = ("tab", "table")
     ordering = ("-created_at",)
 
 
