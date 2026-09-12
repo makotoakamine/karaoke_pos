@@ -17,6 +17,10 @@ staticfiles/
 # Kitchen tickets dumped by KARAOKE_PRINTER_DRY_RUN=1
 receipts_out/
 
+# User-uploaded media (config alert sound, etc.) — the bundled default lives
+# under static/vendor/audio/ and is committed; only runtime uploads land here.
+media/
+
 # Compiled CSS from the Sass pipeline (regenerate with `npm run build:css`)
 static/css/main.css
 static/css/main.css.map

@@ -2978,6 +2978,132 @@ class AutoPrintFailureNoticeTests(TestCase):
         self.assertIn(".kitchen-auto-print-failed", scss)
 
 
+class AutoPrintAlertSoundTests(TransactionTestCase):
+    """Server-side audible alert on failed kitchen auto-print (#238).
+
+    Uses :class:`TransactionTestCase` because the auto-print fires via
+    :func:`transaction.on_commit` (see :class:`AutoPrintOnKitchenArrivalTests`).
+
+    When a kitchen auto-print attempt fails (:class:`PrinterError`),
+    :func:`core.services.alerts.play_alert` is called so the server host makes
+    an audible noise. A manual re-print that fails does NOT call it — the user
+    is already looking at the screen and gets the on-screen error only. The
+    alert is fire-and-forget so it never blocks the order-creation response.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("garcom", password="secret123")
+        self.tab = Tab.objects.create(name="Comanda Ana")
+        self.table = Table.objects.create(name="Mesa 7", seats=4)
+        self.category = Category.objects.create(name="bebidas")
+        self.fries = Item.objects.create(
+            name="Batata frita",
+            category=self.category,
+            price=Decimal("25.00"),
+            stock=8,
+            requires_kitchen_preparation=True,
+        )
+        self.client.force_login(self.user)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _config(self, auto_print: bool):
+        from core.models import Configuracao
+
+        Configuracao.objects.update_or_create(
+            pk=1,
+            defaults={"auto_print_on_kitchen_arrival": auto_print},
+        )
+
+    def _post(self, lines):
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item_pk, quantity) in enumerate(lines):
+            data[f"lines-{index}-item"] = item_pk
+            data[f"lines-{index}-quantity"] = str(quantity)
+        return self.client.post(reverse("orders:order-create"), data)
+
+    # --- acceptance: auto-print failure fires the alert ---------------------
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_failed_auto_print_fires_play_alert(self):
+        self._config(True)
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ), mock.patch("core.services.alerts.play_alert") as mock_alert:
+            resp = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        # The alert was called exactly once.
+        self.assertEqual(mock_alert.call_count, 1)
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_successful_auto_print_does_not_fire_play_alert(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw"), mock.patch(
+            "core.services.alerts.play_alert"
+        ) as mock_alert:
+            resp = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        mock_alert.assert_not_called()
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_two_consecutive_auto_print_failures_fire_alert_twice(self):
+        """Repeated failures do not block or delay the order response."""
+        self._config(True)
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ), mock.patch("core.services.alerts.play_alert") as mock_alert:
+            resp1 = self._post([(self.fries.pk, 1)])
+            resp2 = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp1.status_code, 302)
+        self.assertEqual(resp2.status_code, 302)
+        self.assertEqual(mock_alert.call_count, 2)
+
+    # --- acceptance: auto-print off → no alert ------------------------------
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_config_off_does_not_fire_play_alert_even_on_failure(self):
+        self._config(False)
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ), mock.patch("core.services.alerts.play_alert") as mock_alert:
+            resp = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        mock_alert.assert_not_called()
+
+    # --- acceptance: manual re-print failure does NOT fire the alert ---------
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_failed_manual_reprint_does_not_fire_play_alert(self):
+        """A manual re-print from the kitchen screen shows the on-screen error
+        and plays no sound — the user is already looking at the screen."""
+        order = Order.objects.create(tab=self.tab, table=self.table)
+        OrderItem.objects.create(
+            order=order,
+            item=self.fries,
+            quantity=1,
+            unit_price=self.fries.price,
+        )
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ), mock.patch("core.services.alerts.play_alert") as mock_alert:
+            resp = self.client.post(
+                reverse("orders:order-print", args=[order.pk])
+            )
+        self.assertEqual(resp.status_code, 503)
+        mock_alert.assert_not_called()
+
+
 class KitchenReceiptFeitoMarkerTests(TestCase):
     """The [FEITO] marker on printed kitchen tickets (#237).
 

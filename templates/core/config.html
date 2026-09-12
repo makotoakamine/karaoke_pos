@@ -23,7 +23,7 @@
 
         <div class="card border">
           <div class="card-body p-4">
-            <form method="post" novalidate>
+            <form method="post" enctype="multipart/form-data" novalidate>
               {% csrf_token %}
 
               {% if form.non_field_errors %}
@@ -46,6 +46,24 @@
                 {% for error in form.auto_print_on_kitchen_arrival.errors %}
                   <div class="invalid-feedback">{{ error|escape }}</div>
                 {% endfor %}
+              </div>
+
+              <hr class="my-4">
+
+              <div class="mb-3">
+                <label class="form-label fw-semibold" for="id_alert_sound">
+                  {{ form.alert_sound.label }}
+                </label>
+                {{ form.alert_sound }}
+                <div class="form-text">
+                  {% trans "Som tocado no servidor quando a impressão automática falha" %}.
+                </div>
+                {% for error in form.alert_sound.errors %}
+                  <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                {% endfor %}
+                <p class="form-text text-info small mt-2">
+                  {% blocktrans with sound=form.instance.alert_sound_name %}Som ativo: {{ sound }}{% endblocktrans %}
+                </p>
               </div>
 
               <div class="karaoke-actions">

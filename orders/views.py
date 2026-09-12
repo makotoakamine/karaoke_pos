@@ -53,7 +53,9 @@ never while the stock-validation row locks are still held. Orders with no
 kitchen-prep lines never auto-print. A printer failure does not break the
 waiter's flow (the redirect already happened by the time the callback runs);
 the failure is recorded as ``Order.auto_print_failed`` and the kitchen surface
-owns the display.
+owns the display. Since #238 a failed auto-print also fires a server-side
+audible alert (:func:`core.services.alerts.play_alert`) so staff near the POS
+server host notice — only for automatic prints, never for a manual re-print.
 """
 import logging
 from typing import Iterable, Tuple
@@ -164,6 +166,14 @@ def _auto_print_kitchen_ticket(order_pk: int) -> None:
             "Falha na impressão automática do pedido #%s: %s", order.pk, exc
         )
         Order.objects.filter(pk=order.pk).update(auto_print_failed=True)
+        # Play a server-side audible alert so staff near the POS server host
+        # notice the failed auto-print. Fire-and-forget: never blocks or fails
+        # the order flow. A manual re-print that fails does NOT call this —
+        # the user is already looking at the screen and gets the on-screen
+        # error instead (see :class:`OrderPrintView`).
+        from core.services.alerts import play_alert
+
+        play_alert()
     else:
         Order.objects.filter(pk=order.pk).update(auto_print_failed=False)
 
