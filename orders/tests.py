@@ -37,7 +37,11 @@ class OrderCreateViewTests(TestCase):
         )
         cls.category = Category.objects.create(name="bebidas")
         cls.item = Item.objects.create(
-            name="Cerveja", category=cls.category, price=Decimal("8.50"), stock=10
+            name="Cerveja",
+            category=cls.category,
+            price=Decimal("8.50"),
+            stock=10,
+            requires_kitchen_preparation=False,
         )
         cls.inactive = Item.objects.create(
             name="Desativado",
@@ -48,6 +52,13 @@ class OrderCreateViewTests(TestCase):
         )
         cls.zero = Item.objects.create(
             name="Sem estoque", category=cls.category, price=Decimal("3.00"), stock=0
+        )
+        cls.food = Item.objects.create(
+            name="Porção",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=8,
+            requires_kitchen_preparation=True,
         )
 
     def setUp(self):
@@ -125,7 +136,9 @@ class OrderCreateViewTests(TestCase):
     # --- acceptance: valid order creates Order + OrderItems, snaps price ---
 
     def test_valid_order_creates_order_with_items_and_snapshotted_price(self):
-        resp = self._post_lines([(self.item.pk, 2)])
+        # A kitchen item so the order starts open — the serve-direct case is
+        # covered by the #235 suite below.
+        resp = self._post_lines([(self.food.pk, 2)])
         self.assertEqual(resp.status_code, 302)
 
         order = Order.objects.get()
@@ -134,9 +147,9 @@ class OrderCreateViewTests(TestCase):
         self.assertEqual(order.table_id, self.table.pk)
         self.assertEqual(order.items.count(), 1)
         line = order.items.get()
-        self.assertEqual(line.item_id, self.item.pk)
+        self.assertEqual(line.item_id, self.food.pk)
         self.assertEqual(line.quantity, 2)
-        self.assertEqual(line.unit_price, Decimal("8.50"))
+        self.assertEqual(line.unit_price, Decimal("25.00"))
 
     def test_price_snapshot_is_not_rewritten_when_item_price_changes(self):
         self._post_lines([(self.item.pk, 1)])
@@ -359,6 +372,91 @@ class OrderCreateViewTests(TestCase):
         resp = self._post_lines([(self.zero.pk, 1)])
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(Order.objects.exists())
+
+    # --- acceptance: serve-direct orders start done, kitchen orders open (#235)
+
+    def test_drinks_only_order_starts_done(self):
+        """An order whose lines are all serve-direct is created ``done``.
+
+        The kitchen has nothing to prepare, so the order never appears on the
+        kitchen screen and never needs the "Pronto" button.
+        """
+        resp = self._post_lines([(self.item.pk, 2)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.status, "done")
+
+    def test_drinks_only_order_still_decrements_stock_and_snapshots_price(self):
+        """A serve-direct order is recorded exactly like an open one, only the
+        starting status differs: stock moves and the unit price is snapshotted
+        from the locked item just the same."""
+        self._post_lines([(self.item.pk, 3)])
+        order = Order.objects.get()
+        self.assertEqual(order.status, "done")
+        line = order.items.get()
+        self.assertEqual(line.unit_price, Decimal("8.50"))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 7)
+
+    def test_mixed_order_starts_open(self):
+        """A line that needs the kitchen is enough to keep the order ``open``."""
+        resp = self._post_lines([(self.item.pk, 1), (self.food.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.status, "open")
+
+    def test_all_kitchen_order_starts_open(self):
+        """An order where every line needs preparation is unchanged: ``open``."""
+        resp = self._post_lines([(self.food.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.status, "open")
+
+    def test_drinks_only_order_with_two_serve_direct_lines_starts_done(self):
+        """Multiple serve-direct lines still resolve to ``done``."""
+        other_drink = Item.objects.create(
+            name="Refrigerante",
+            category=self.category,
+            price=Decimal("6.00"),
+            stock=5,
+            requires_kitchen_preparation=False,
+        )
+        resp = self._post_lines([(self.item.pk, 1), (other_drink.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.status, "done")
+        self.assertEqual(order.items.count(), 2)
+
+    def test_drinks_only_order_reaches_the_tab_detail(self):
+        """The tab detail page still lists the drinks-only order with its lines."""
+        self._post_lines([(self.item.pk, 2)])
+        order = Order.objects.get()
+        detail = self.client.get(
+            reverse("tabs:tab-detail", args=[self.tab.pk])
+        ).content.decode()
+        self.assertIn(f"#{order.pk}", detail)
+        self.assertIn("Cerveja", detail)
+
+    # --- acceptance: rejected submissions still write nothing (#235 guard) --
+
+    def test_drinks_only_oversell_is_rejected_and_writes_nothing(self):
+        """A serve-direct line that overflows stock must reject like any other."""
+        resp = self._post_lines([(self.item.pk, 11)])
+        self.assertEqual(resp.status_code, 400)
+        self.assertContains(resp, "Estoque insuficiente", status_code=400)
+        self.assertFalse(Order.objects.exists())
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 10)
+
+    def test_closed_tab_with_drinks_only_is_rejected_and_writes_nothing(self):
+        resp = self._post_lines(
+            [(self.item.pk, 1)], tab_pk=self.closed_tab.pk
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertContains(resp, "Comanda inválida", status_code=400)
+        self.assertFalse(Order.objects.exists())
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, 10)
 
     # --- navigation ---------------------------------------------------------
 
@@ -721,6 +819,13 @@ class OrderWizardTests(TestCase):
             price=Decimal("19.90"),
             stock=4,
         )
+        cls.fries = Item.objects.create(
+            name="Batata frita",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=6,
+            requires_kitchen_preparation=True,
+        )
 
     def setUp(self):
         self.client.force_login(self.user)
@@ -920,20 +1025,22 @@ class OrderWizardTests(TestCase):
         self.assertEqual(self.caipirinha.stock, 3)
 
     def test_the_submitted_order_reaches_the_kitchen_and_the_tab_detail(self):
+        # A kitchen item so the order starts open and lands on the kitchen
+        # screen — serve-direct orders start done (#235) and would not.
         self.client.post(
-            reverse("orders:order-create"), self._payload([(self.beer.pk, 2)])
+            reverse("orders:order-create"), self._payload([(self.fries.pk, 2)])
         )
         order = Order.objects.get()
 
         kitchen = self.client.get(reverse("orders:kitchen")).content.decode()
         self.assertIn(f"#{order.pk}", kitchen)
-        self.assertIn("Cerveja", kitchen)
+        self.assertIn("Batata frita", kitchen)
 
         detail = self.client.get(
             reverse("tabs:tab-detail", args=[self.tab.pk])
         ).content.decode()
         self.assertIn(f"#{order.pk}", detail)
-        self.assertIn("Cerveja", detail)
+        self.assertIn("Batata frita", detail)
 
     # --- acceptance: the wizard styling lives in the project's SCSS ----------
 
@@ -1775,7 +1882,11 @@ class OrderLineNotesTests(TestCase):
         cls.table = Table.objects.create(name="Mesa 7", seats=4)
         cls.category = Category.objects.create(name="bebidas")
         cls.caipirinha = Item.objects.create(
-            name="Caipirinha", category=cls.category, price=Decimal("22.00"), stock=20
+            name="Caipirinha",
+            category=cls.category,
+            price=Decimal("22.00"),
+            stock=20,
+            requires_kitchen_preparation=True,
         )
         cls.fries = Item.objects.create(
             name="Porção de batata frita",

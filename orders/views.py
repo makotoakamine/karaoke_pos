@@ -10,6 +10,15 @@ before anything is written, the items' stock counts are decremented, and the
 order with its lines is created. If any single line exceeds stock the whole
 submission is rejected with a clear form error and nothing is changed.
 
+Since #235 an order whose lines are all serve-direct — no line's item has
+``Item.requires_kitchen_preparation`` set — is recorded with
+``status=Order.Status.DONE`` from the start, because there is nothing for the
+kitchen to prepare and therefore no reason it should ever sit on the kitchen
+screen or wait for the "Pronto" button. Mixed orders and all-kitchen orders
+keep starting ``open`` as before. The decision is made inside the same
+``transaction.atomic()`` block, off the item rows already locked for stock
+validation, so it costs no extra query and stays race-safe.
+
 Since #225 the same view also hands the template the raw picker data — the
 open tabs, the sellable catalogue and its categories — so the touch UI can
 filter client-side without a second endpoint. Since #231 that page is a
@@ -204,10 +213,22 @@ class OrderCreateView(LoginRequiredMixin, View):
                 # All lines validated — write the order against the tab,
                 # snapshot the prices and decrement stock using the locked
                 # instances. The table rides along untouched, if there is one.
+                # An order whose lines are all serve-direct (no line's item
+                # requires kitchen preparation) starts done: there is nothing
+                # for the kitchen to prepare, so it never needs the "Pronto"
+                # button. The flagged items are already locked in
+                # ``items_by_pk``, so reading the flag off them costs no extra
+                # query and stays race-safe inside this transaction.
+                needs_kitchen = any(
+                    items_by_pk[item_pk].requires_kitchen_preparation
+                    for item_pk in demanded
+                )
                 order = Order.objects.create(
                     tab=tab,
                     table=table,
-                    status=Order.Status.OPEN,
+                    status=(
+                        Order.Status.OPEN if needs_kitchen else Order.Status.DONE
+                    ),
                 )
                 for item, quantity, notes in lines:
                     OrderItem.objects.create(
