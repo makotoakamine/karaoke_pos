@@ -790,6 +790,65 @@ h1, h2, h3, h4, h5, h6,
   }
 }
 
+// Footer actions: "Pronto" takes the room it always had and "Imprimir" sits
+// next to it, sized to its own text. Both stay one big touch target tall.
+.kitchen-card-actions {
+  display: flex;
+  align-items: stretch;
+  gap: .5rem;
+
+  > form {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+// The secondary action of the pair: flat outline, same square uppercase
+// treatment as "Pronto" so the footer reads as one row, never as two styles.
+.kitchen-btn-print {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: #{tint-color($primary, 40%)};
+  --bs-btn-hover-bg: transparent;
+  --bs-btn-hover-border-color: #{$primary};
+  --bs-btn-active-color: #{tint-color($primary, 40%)};
+  --bs-btn-active-bg: transparent;
+  --bs-btn-active-border-color: #{$primary};
+
+  flex: 0 0 auto;
+  padding: .85rem 1rem;
+  font-size: 1.05rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+// Outcome of a print attempt, shown under the buttons instead of an alert box:
+// the kitchen must never get a modal it has to dismiss with wet hands.
+.kitchen-print-notice {
+  @include karaoke-micro-label;
+
+  margin: .6rem 0 0;
+  color: #{tint-color($success, 30%)};
+  white-space: normal;
+  text-transform: none;
+}
+
+.kitchen-print-notice-error {
+  color: #{tint-color($danger, 30%)};
+}
+
+// At 360px the two actions would each be too narrow to hit, so they stack.
+@media (max-width: 400px) {
+  .kitchen-card-actions {
+    flex-direction: column;
+  }
+
+  .kitchen-btn-print {
+    width: 100%;
+  }
+}
+
 // The "Pronto" button stays a big touch target, but squared and uppercase like
 // the rest of the theme instead of a rounded pill.
 .kitchen-btn-done {

@@ -17,13 +17,17 @@ the picker is a layer over the very same form fields and formset.
 Table occupancy is deliberately not touched here (#224): the table is now only
 a hint for the waiter, and ``tables.Table.status`` is owned by the tables
 screens alone.
+
+The kitchen screen (#110) also prints (#228): :class:`OrderPrintView` renders an
+order as an ESC/POS kitchen ticket and hands it to the thermal printer. It is a
+read-only action on the order — printing never changes the status.
 """
 from typing import Iterable, Tuple
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils.translation import gettext as _
@@ -34,6 +38,8 @@ from tabs.models import Tab
 
 from .forms import OrderForm, OrderItemLineFormSet
 from .models import Order, OrderItem
+from .services.printer import PrinterError, print_raw
+from .services.receipts import kitchen_receipt_bytes
 
 
 def _open_tabs():
@@ -281,3 +287,48 @@ class OrderDoneView(LoginRequiredMixin, View):
             order.status = Order.Status.DONE
             order.save(update_fields=["status", "updated_at"])
         return redirect(reverse("orders:kitchen"))
+
+
+class OrderPrintView(LoginRequiredMixin, View):
+    """POST-only endpoint that sends an order's kitchen ticket to the printer.
+
+    Reached from the "Imprimir" button on each kitchen card. It composes the
+    ESC/POS bytes and hands them to :func:`orders.services.printer.print_raw`,
+    which either reaches the hardware or — with ``KARAOKE_PRINTER_DRY_RUN=1`` —
+    dumps the ticket to disk so the flow can be exercised without a printer.
+
+    Printing is deliberately read-only with respect to the order: the status is
+    never touched, so re-printing a lost ticket does not take the card off the
+    kitchen screen. Only "Pronto" does that.
+
+    Replies in JSON so the kitchen JavaScript can show the outcome inline:
+    ``200`` with the printer's message on success, ``503`` with the error text
+    when no printer answered — never a silent failure.
+    """
+
+    def post(self, request, pk, *args, **kwargs):
+        # Prefetch the lines the way the queue does: the ticket walks them all,
+        # and an unknown order is a plain 404 (a stale card, most likely).
+        order = get_object_or_404(
+            Order.objects.select_related("tab", "table").prefetch_related(
+                "items__item"
+            ),
+            pk=pk,
+        )
+        payload = kitchen_receipt_bytes(order)
+
+        try:
+            result = print_raw(payload, label=f"pedido-{order.pk}-cozinha")
+        except PrinterError as exc:
+            # 503: the app is fine, the printer is not. The UI shows this text
+            # verbatim so whoever is at the pass knows what to check.
+            return JsonResponse({"success": False, "error": str(exc)}, status=503)
+
+        return JsonResponse(
+            {
+                "success": True,
+                "message": _("Pedido #{} enviado para a impressora. {}").format(
+                    order.pk, result.message
+                ),
+            }
+        )

@@ -14,6 +14,9 @@ db.sqlite3-journal
 # Django collected static (generated at deploy time)
 staticfiles/
 
+# Kitchen tickets dumped by KARAOKE_PRINTER_DRY_RUN=1
+receipts_out/
+
 # Compiled CSS from the Sass pipeline (regenerate with `npm run build:css`)
 static/css/main.css
 static/css/main.css.map

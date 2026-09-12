@@ -1,10 +1,14 @@
 """Functional tests for the orders app covering the task's acceptance criteria."""
+import shutil
+import tempfile
 from decimal import Decimal
+from pathlib import Path
+from unittest import mock
 
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db.models import ProtectedError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import resolve, reverse
 from django.utils import timezone
 
@@ -12,6 +16,8 @@ from inventory.models import Category, Item
 from orders import urls as orders_urls
 from orders.forms import OrderForm
 from orders.models import Order, OrderItem
+from orders.services.printer import PrinterError
+from orders.services.receipts import ReceiptBuilder, normalize_text, strip_escpos
 from orders.views import OrderCreateView
 from tables.models import Table
 from tabs.models import Tab
@@ -430,11 +436,22 @@ class OrderPickerDataTests(TestCase):
         self.assertIs(match.func.view_class, OrderCreateView)
 
     def test_orders_app_exposes_no_second_order_page_or_picker_endpoint(self):
-        """No mobile-only URL and no JSON feed: the page ships its own data."""
+        """No mobile-only URL and no JSON feed: the page ships its own data.
+
+        ``order-print`` (#228) is an action on an existing order, not a second
+        way to build one, so it is allowed here — the point of this guard is
+        that the picker has no data endpoint of its own.
+        """
         names = {pattern.name for pattern in orders_urls.urlpatterns}
         self.assertEqual(
             names,
-            {"order-create", "kitchen", "kitchen-queue", "order-done"},
+            {
+                "order-create",
+                "kitchen",
+                "kitchen-queue",
+                "order-done",
+                "order-print",
+            },
         )
 
     # --- acceptance: only open tabs are offered, with their table -----------
@@ -1016,3 +1033,197 @@ class KitchenViewTests(TestCase):
     def test_home_links_to_kitchen(self):
         resp = self.client.get(reverse("core:home"))
         self.assertContains(resp, reverse("orders:kitchen"))
+
+
+@override_settings(KARAOKE_PRINTER_DRY_RUN=True)
+class OrderPrintViewTests(TestCase):
+    """Acceptance tests for the kitchen ticket printing endpoint (#228).
+
+    Every test runs in dry-run mode with the dump directory pointed at a
+    throwaway temp dir, which is exactly how the feature is QA'd on a machine
+    with no thermal printer attached.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab = Tab.objects.create(name="Comanda Ana")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.category = Category.objects.create(name="bebidas")
+        cls.beer = Item.objects.create(
+            name="Cerveja long neck",
+            category=cls.category,
+            price=Decimal("12.50"),
+            stock=20,
+        )
+        cls.fries = Item.objects.create(
+            name="Porção de batata frita",
+            category=cls.category,
+            price=Decimal("34.90"),
+            stock=10,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, self.dump_dir, True)
+        patched = override_settings(KARAOKE_PRINTER_DUMP_DIR=self.dump_dir)
+        patched.enable()
+        self.addCleanup(patched.disable)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _make_order(self, lines, table=None):
+        order = Order.objects.create(tab=self.tab, table=table)
+        for item, qty in lines:
+            OrderItem.objects.create(
+                order=order, item=item, quantity=qty, unit_price=item.price
+            )
+        return order
+
+    def _print(self, order):
+        return self.client.post(reverse("orders:order-print", args=[order.pk]))
+
+    def _ticket_text(self, order):
+        return (self.dump_dir / f"pedido-{order.pk}-cozinha.txt").read_text(
+            encoding="utf-8"
+        )
+
+    # --- acceptance: login required ----------------------------------------
+
+    def test_anonymous_print_redirected_to_login(self):
+        self.client.logout()
+        order = self._make_order([(self.beer, 1)])
+        resp = self._print(order)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("next=", resp["Location"])
+        self.assertFalse(list(self.dump_dir.iterdir()))
+
+    # --- acceptance: dry-run success --------------------------------------
+
+    def test_print_returns_success_json(self):
+        order = self._make_order([(self.beer, 2)])
+        resp = self._print(order)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["success"])
+        self.assertIn(str(order.pk), body["message"])
+
+    def test_print_writes_bin_and_txt_dumps(self):
+        order = self._make_order([(self.beer, 2)])
+        self._print(order)
+
+        binary = self.dump_dir / f"pedido-{order.pk}-cozinha.bin"
+        readable = self.dump_dir / f"pedido-{order.pk}-cozinha.txt"
+        self.assertTrue(binary.exists())
+        self.assertTrue(readable.exists())
+        # The .bin is the raw ESC/POS stream: it opens with the reset command
+        # and ends with the cut, which the readable copy has stripped out.
+        raw = binary.read_bytes()
+        self.assertTrue(raw.startswith(b"\x1b@"))
+        self.assertTrue(raw.endswith(b"\x1dVB\x00"))
+        self.assertNotIn("\x1b", readable.read_text(encoding="utf-8"))
+
+    def test_printing_does_not_change_the_order_status(self):
+        """Printing is read-only: only "Pronto" takes a card off the screen."""
+        order = self._make_order([(self.beer, 1)])
+        self._print(order)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+
+    # --- acceptance: ticket content ----------------------------------------
+
+    def test_ticket_shows_tab_order_number_and_time(self):
+        order = self._make_order([(self.beer, 1)], table=self.table)
+        self._print(order)
+        text = self._ticket_text(order)
+
+        self.assertIn("Comanda Ana", text)
+        self.assertIn(f"PEDIDO #{order.pk}", text)
+        self.assertIn("Mesa: Mesa 7", text)
+        self.assertIn(
+            timezone.localtime(order.created_at).strftime("%d/%m/%Y %H:%M"), text
+        )
+
+    def test_ticket_omits_the_table_when_the_order_has_none(self):
+        order = self._make_order([(self.beer, 1)])
+        self._print(order)
+        self.assertNotIn("Mesa:", self._ticket_text(order))
+
+    def test_ticket_lists_every_item_with_its_quantity(self):
+        order = self._make_order([(self.beer, 2), (self.fries, 3)])
+        self._print(order)
+        text = self._ticket_text(order)
+
+        # Accents are normalized to ASCII for the printer's DOS code page.
+        self.assertIn("2x Cerveja long neck", text)
+        self.assertIn("3x Porcao de batata frita", text)
+        self.assertNotIn("Porção", text)
+        self.assertIn("Total de itens:", text)
+        self.assertIn("Total de unidades:", text)
+
+    def test_ticket_carries_no_prices(self):
+        order = self._make_order([(self.beer, 2), (self.fries, 3)])
+        self._print(order)
+        text = self._ticket_text(order)
+
+        self.assertNotIn("R$", text)
+        self.assertNotIn("12.50", text)
+        self.assertNotIn("34.90", text)
+        # ...and no line total either (2 x 12.50 = 25.00).
+        self.assertNotIn("25.00", text)
+
+    # --- acceptance: unknown order ----------------------------------------
+
+    def test_unknown_order_returns_404(self):
+        resp = self.client.post(reverse("orders:order-print", args=[999999]))
+        self.assertEqual(resp.status_code, 404)
+        self.assertFalse(list(self.dump_dir.iterdir()))
+
+    # --- acceptance: printer failure surfaces --------------------------------
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_printer_error_returns_503_with_the_message(self):
+        """With dry-run off and no printer, the UI must get a readable error."""
+        order = self._make_order([(self.beer, 1)])
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ):
+            resp = self._print(order)
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertFalse(body["success"])
+        self.assertEqual(body["error"], "Nenhuma impressora respondeu.")
+
+    # --- acceptance: the button is on every card ---------------------------
+
+    def test_kitchen_card_offers_a_print_button(self):
+        order = self._make_order([(self.beer, 1)])
+        resp = self.client.get(reverse("orders:kitchen"))
+        self.assertContains(resp, reverse("orders:order-print", args=[order.pk]))
+        self.assertContains(resp, "Imprimir")
+
+    def test_polling_fragment_also_carries_the_print_button(self):
+        """The delegated listener needs the button in the polled cards too."""
+        order = self._make_order([(self.beer, 1)])
+        resp = self.client.get(reverse("orders:kitchen-queue"))
+        self.assertContains(resp, reverse("orders:order-print", args=[order.pk]))
+
+
+class KitchenReceiptBuilderTests(TestCase):
+    """Unit tests for the ported ESC/POS helpers."""
+
+    def test_normalize_text_strips_accents_and_symbols(self):
+        self.assertEqual(normalize_text("Porção — 20°"), "Porcao - 20o")
+        self.assertEqual(normalize_text(None), "")
+
+    def test_strip_escpos_removes_the_control_sequences(self):
+        payload = b"\x1b@\x1ba\x01\x1bE\x01OI\n\x1bE\x00\x1d!\x00\x1dVB\x00"
+        self.assertEqual(strip_escpos(payload), "OI\n")
+
+    def test_builder_right_aligns_within_the_paper_width(self):
+        builder = ReceiptBuilder(width=20, margin=2)
+        builder.lr("Itens:", "3")
+        self.assertIn("Itens:           3", builder.to_text())

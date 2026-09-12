@@ -89,9 +89,27 @@ A interface está em português brasileiro (pt-br).
     "encerrada"; pedidos encerrados nunca aparecem na tela. Nem a comanda nem
     a ocupação das mesas são tocadas aqui. O card da cozinha usa o nome da
     comanda como título e mostra a mesa embaixo só quando o pedido tem uma.
+    Desde #228 cada card tem também um botão "Imprimir", que faz POST para
+    `/pedidos/<pk>/imprimir/` e manda o cupom da cozinha para a impressora
+    térmica — ver ["Impressão térmica"](#impressão-térmica-cupom-de-cozinha-228).
+    Imprimir **não** mexe no status do pedido: só "Pronto" tira o card da tela.
+  - `orders/services/printer.py` – entrega dos bytes ESC/POS à impressora,
+    portado do projeto irmão Okinawa POS. Tenta, nesta ordem: o device
+    explícito de `KARAOKE_PRINTER_DEVICE`, a fila do sistema (CUPS com
+    `lp -o raw` no Linux, spooler RAW no Windows), os devices USB/seriais
+    comuns e, por fim, o dump em arquivo do modo de teste. Quando nada
+    responde, levanta `PrinterError` com um texto legível.
+  - `orders/services/receipts.py` – composição do conteúdo do cupom
+    (`ReceiptBuilder`, constantes ESC/POS, `normalize_text` e `strip_escpos`),
+    também portado do Okinawa POS. Só o cupom de cozinha é montado aqui:
+    cabeçalho com o nome da comanda, a mesa (quando houver), o número do
+    pedido e a hora, e uma linha por item com a quantidade — sem preços. Os
+    acentos são normalizados para ASCII porque as impressoras térmicas usam
+    code pages DOS (CP437/CP850).
   - `orders/urls.py` – `/pedidos/novo/` (abrir pedido), `/pedidos/cozinha/`
-    (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards) e
-    `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto).
+    (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards),
+    `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto) e
+    `/pedidos/<pk>/imprimir/` (imprimir o cupom de cozinha).
   - `orders/admin.py` – registra `Order` e `OrderItem` no admin do Django
     como fallback.
 - **`templates/orders/order_form.html`** – a página `/pedidos/novo/` (#225).
@@ -198,6 +216,71 @@ Pontos importantes:
   alcoólicas", "bebidas alcoólicas" e "comidas" são buscadas pelo nome, nunca
   por PK, então `/estoque/categorias/` não ganha nomes duplicados.
 
+## Impressão térmica (cupom de cozinha) (#228)
+
+Na tela `/pedidos/cozinha/`, cada card traz um botão **"Imprimir"** ao lado de
+"Pronto". Ele faz um POST (com CSRF) para `/pedidos/<pk>/imprimir/`, que monta o
+cupom de cozinha em ESC/POS e o envia à impressora térmica. A resposta é JSON:
+`{"success": true, "message": ...}` quando o cupom saiu, ou HTTP 503 com
+`{"success": false, "error": ...}` quando nenhuma impressora respondeu — a
+mensagem aparece no rodapé do próprio card e o botão volta a ficar habilitado,
+nunca uma falha silenciosa.
+
+Imprimir é uma ação **somente leitura** sobre o pedido: o status não muda, então
+reimprimir um cupom perdido não tira o card da tela da cozinha.
+
+O botão continua funcionando nos cards que chegam pelo polling porque a tela tem
+**um único listener delegado** em `#kitchen-queue` (o container que nunca é
+substituído), e não um listener por botão.
+
+### Variáveis de ambiente
+
+| Variável | Padrão | Para que serve |
+|----------|--------|----------------|
+| `KARAOKE_PRINTER_NAME` | *(vazio)* | Nome da fila no CUPS (Linux) ou da impressora no Windows. Quando definido, é tentado antes da lista de nomes comuns. |
+| `KARAOKE_PRINTER_DEVICE` | *(vazio)* | Caminho direto do device (ex.: `/dev/usb/lp0` no Linux, `COM3` no Windows). É a rota mais confiável e tem prioridade sobre todas as outras. |
+| `KARAOKE_PRINTER_DRY_RUN` | *(desligado)* | Com `1`, `true` ou `yes`, não tenta impressora nenhuma: grava o cupom em arquivo. É o modo de desenvolvimento/QA. |
+| `KARAOKE_PRINTER_DUMP_DIR` | `receipts_out/` na raiz do projeto | Onde os cupons do modo de teste são gravados (o diretório é criado se não existir). |
+| `KARAOKE_RECEIPT_WIDTH` | `48` | Largura do papel em caracteres. 48 = bobina de 80mm (Elgin i9 / Bematech). |
+| `KARAOKE_RECEIPT_LEFT_MARGIN` | `2` | Espaços à esquerda de cada linha, para o texto não nascer colado na borda do papel. |
+
+### Testando sem impressora
+
+```bash
+KARAOKE_PRINTER_DRY_RUN=1 uv run manage.py runserver
+```
+
+Abra `/pedidos/cozinha/`, clique em "Imprimir" num card e o cupom é gravado em
+`receipts_out/` em dois arquivos:
+
+- `pedido-<pk>-cozinha.bin` – o fluxo ESC/POS cru, exatamente o que iria para a
+  impressora;
+- `pedido-<pk>-cozinha.txt` – a mesma coisa legível, sem os comandos de
+  controle. É o arquivo para conferir o conteúdo:
+
+```
+Comanda Joao & Familia
+** COZINHA **
+  ==============================================
+PEDIDO #1
+  ==============================================
+  Mesa: Mesa 7
+  Hora: 12/09/2026 00:38
+  ----------------------------------------------
+  PREPARAR
+  ----------------------------------------------
+  3x Caipirinha de limao
+  2x Porcao de batata frita com cheddar e bacon
+  ----------------------------------------------
+  Total de itens:                              2
+  Total de unidades:                           5
+```
+
+As linhas do cabeçalho sem margem são as que a **impressora** centraliza; o
+`.txt` mostra os caracteres como saem do compositor, sem simular a centralização.
+
+`receipts_out/` está no `.gitignore`.
+
 ## Conta de administrador
 
 Por enquanto há um único tipo de usuário — o administrador — criado via
@@ -267,7 +350,13 @@ de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
   acento até 15 min, âmbar (`.kitchen-card-late`) acima de 15, vermelho
   (`.kitchen-card-overdue`) acima de 30. O cálculo vive no filtro
   `orders/templatetags/kitchen_tags.py` (`minutes_since`) e não na view, para
-  que o endpoint de polling receba a escalada de graça.
+  que o endpoint de polling receba a escalada de graça. O rodapé do card
+  (`.kitchen-card-actions`) põe "Pronto" e "Imprimir" na mesma linha: "Pronto"
+  segue primário e ocupando a largura que tinha, "Imprimir"
+  (`.kitchen-btn-print`) é outline quadrado e maiúsculo para não ser apertado
+  por reflexo. Abaixo dos dois, `.kitchen-print-notice` mostra o resultado da
+  impressão sem modal nenhum. Em telas abaixo de 400px os dois botões
+  empilham, para nenhum ficar estreito demais para o toque.
 - Formulários de item/mesa e a confirmação de exclusão — card plano, rótulos
   em caixa alta e barra de ações alinhada à direita (`Cancelar` outline,
   ação destrutiva em `btn-danger`).
