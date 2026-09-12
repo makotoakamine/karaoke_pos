@@ -40,6 +40,7 @@
                 <th scope="col" class="text-end">{% trans "Preço" %}</th>
                 <th scope="col" class="text-end">{% trans "Estoque" %}</th>
                 <th scope="col" class="text-center">{% trans "Ativo" %}</th>
+                <th scope="col" class="text-center">{% trans "Cozinha" %}</th>
                 <th scope="col" class="text-end">{% trans "Ações" %}</th>
               </tr>
             </thead>
@@ -62,6 +63,13 @@
                       <span class="badge karaoke-chip karaoke-chip-off">{% trans "não" %}</span>
                     {% endif %}
                   </td>
+                  <td class="text-center">
+                    {% if item.requires_kitchen_preparation %}
+                      <span class="badge karaoke-chip karaoke-chip-on">{% trans "sim" %}</span>
+                    {% else %}
+                      <span class="badge karaoke-chip karaoke-chip-off">{% trans "não" %}</span>
+                    {% endif %}
+                  </td>
                   <td class="text-end">
                     {% comment %}btn-group keeps the two actions flush and the
                     shared min-width keeps them the same size in every row.{% endcomment %}
@@ -76,7 +84,7 @@
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan="6" class="text-center text-body-secondary py-4">
+                  <td colspan="7" class="text-center text-body-secondary py-4">
                     {% trans "Nenhum item cadastrado. Clique em \"Novo item\" para começar." %}
                   </td>
                 </tr>

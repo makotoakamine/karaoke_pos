@@ -86,6 +86,15 @@
                 {% for error in form.is_active.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
               </div>
 
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch"
+                       name="requires_kitchen_preparation" id="id_requires_kitchen_preparation"
+                       {% if form.requires_kitchen_preparation.value %}checked{% endif %}>
+                <label class="form-check-label" for="id_requires_kitchen_preparation">{{ form.requires_kitchen_preparation.label }}</label>
+                <div class="form-text">{{ form.requires_kitchen_preparation.help_text|escape }}</div>
+                {% for error in form.requires_kitchen_preparation.errors %}<div class="invalid-feedback">{{ error|escape }}</div>{% endfor %}
+              </div>
+
               <div class="karaoke-actions">
                 <a href="{% url 'inventory:item-list' %}" class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Cancelar" %}</a>
                 <button type="submit" class="btn btn-primary">{% trans "Salvar" %}</button>

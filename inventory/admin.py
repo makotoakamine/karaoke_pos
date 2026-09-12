@@ -22,8 +22,8 @@ class NoteSuggestionInline(admin.TabularInline):
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
     inlines = [NoteSuggestionInline]
-    list_display = ("name", "category", "price", "stock", "is_active", "updated_at")
-    list_filter = ("is_active", "category")
+    list_display = ("name", "category", "price", "stock", "is_active", "requires_kitchen_preparation", "updated_at")
+    list_filter = ("is_active", "requires_kitchen_preparation", "category")
     search_fields = ("name",)
-    list_editable = ("stock", "is_active")
+    list_editable = ("stock", "is_active", "requires_kitchen_preparation")
     ordering = ("name",)

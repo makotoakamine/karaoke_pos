@@ -39,6 +39,7 @@ DEMO_ITEMS = [
         "category": NAO_ALCOOLICAS,
         "price": Decimal("7.00"),
         "stock": 96,
+        "requires_kitchen_preparation": False,
     },
     # The two canonical chip examples from #230: same "gelo" suggestion on both
     # items (allowed — uniqueness is per item), different citrus each.
@@ -47,6 +48,7 @@ DEMO_ITEMS = [
         "category": NAO_ALCOOLICAS,
         "price": Decimal("8.00"),
         "stock": 72,
+        "requires_kitchen_preparation": False,
         "note_suggestions": ["gelo", "rodela de limão"],
     },
     {
@@ -54,6 +56,7 @@ DEMO_ITEMS = [
         "category": NAO_ALCOOLICAS,
         "price": Decimal("8.00"),
         "stock": 66,
+        "requires_kitchen_preparation": False,
         "note_suggestions": ["gelo", "rodela de laranja"],
     },
     {
@@ -61,24 +64,28 @@ DEMO_ITEMS = [
         "category": NAO_ALCOOLICAS,
         "price": Decimal("5.00"),
         "stock": 84,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Suco de laranja natural 300ml",
         "category": NAO_ALCOOLICAS,
         "price": Decimal("12.00"),
         "stock": 32,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Energético lata 250ml",
         "category": NAO_ALCOOLICAS,
         "price": Decimal("15.00"),
         "stock": 48,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Água de coco 300ml",
         "category": NAO_ALCOOLICAS,
         "price": Decimal("9.00"),
         "stock": 24,
+        "requires_kitchen_preparation": False,
     },
     # Out of season: seeded inactive so the inactive-item path is visible on
     # /estoque/ and the drink stays off the order page.
@@ -88,6 +95,7 @@ DEMO_ITEMS = [
         "price": Decimal("14.00"),
         "stock": 10,
         "is_active": False,
+        "requires_kitchen_preparation": False,
     },
     # bebidas alcoólicas
     {
@@ -95,18 +103,21 @@ DEMO_ITEMS = [
         "category": ALCOOLICAS,
         "price": Decimal("12.00"),
         "stock": 100,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Chopp 300ml",
         "category": ALCOOLICAS,
         "price": Decimal("10.00"),
         "stock": 72,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Caipirinha de limão",
         "category": ALCOOLICAS,
         "price": Decimal("18.00"),
         "stock": 45,
+        "requires_kitchen_preparation": False,
         "note_suggestions": ["sem açúcar", "com vodka"],
     },
     {
@@ -114,18 +125,21 @@ DEMO_ITEMS = [
         "category": ALCOOLICAS,
         "price": Decimal("26.00"),
         "stock": 38,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Dose de whisky",
         "category": ALCOOLICAS,
         "price": Decimal("22.00"),
         "stock": 30,
+        "requires_kitchen_preparation": False,
     },
     {
         "name": "Dose de vodka",
         "category": ALCOOLICAS,
         "price": Decimal("16.00"),
         "stock": 34,
+        "requires_kitchen_preparation": False,
     },
     # comidas
     {
@@ -133,6 +147,7 @@ DEMO_ITEMS = [
         "category": COMIDAS,
         "price": Decimal("32.00"),
         "stock": 26,
+        "requires_kitchen_preparation": True,
         "note_suggestions": ["sem sal", "bem passada", "com cheddar"],
     },
     {
@@ -140,24 +155,28 @@ DEMO_ITEMS = [
         "category": COMIDAS,
         "price": Decimal("38.00"),
         "stock": 22,
+        "requires_kitchen_preparation": True,
     },
     {
         "name": "Calabresa acebolada",
         "category": COMIDAS,
         "price": Decimal("35.00"),
         "stock": 20,
+        "requires_kitchen_preparation": True,
     },
     {
         "name": "Pastel de queijo",
         "category": COMIDAS,
         "price": Decimal("14.00"),
         "stock": 40,
+        "requires_kitchen_preparation": True,
     },
     {
         "name": "Amendoim torrado",
         "category": COMIDAS,
         "price": Decimal("10.00"),
         "stock": 60,
+        "requires_kitchen_preparation": True,
     },
 ]
 
@@ -254,6 +273,9 @@ class Command(BaseCommand):
                     "price": spec["price"],
                     "stock": spec["stock"],
                     "is_active": spec.get("is_active", True),
+                    "requires_kitchen_preparation": spec.get(
+                        "requires_kitchen_preparation", True
+                    ),
                 },
             )
             if created:

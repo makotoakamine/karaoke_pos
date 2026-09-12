@@ -78,6 +78,15 @@ class Item(models.Model):
         default=True,
         help_text="Itens inativos permanecem no banco mas saem do catálogo de vendas.",
     )
+    requires_kitchen_preparation = models.BooleanField(
+        "requer preparo na cozinha",
+        default=True,
+        help_text=(
+            "Marque para itens preparados na cozinha. Bebidas e snacks de "
+            "prateleira podem ser desligados para não seguir para a tela da "
+            "cozinha."
+        ),
+    )
     created_at = models.DateTimeField("criado em", auto_now_add=True)
     updated_at = models.DateTimeField("atualizado em", auto_now=True)
 

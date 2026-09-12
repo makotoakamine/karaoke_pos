@@ -9,6 +9,11 @@ from django.test import TestCase
 from django.urls import reverse
 
 from inventory.models import Category, Item, NoteSuggestion
+from inventory.management.commands.seed_demo import (
+    NAO_ALCOOLICAS,
+    ALCOOLICAS,
+    COMIDAS,
+)
 
 
 class InventoryViewTests(TestCase):
@@ -141,6 +146,57 @@ class InventoryViewTests(TestCase):
     def test_home_links_to_inventory(self):
         resp = self.client.get(reverse("core:home"))
         self.assertContains(resp, reverse("inventory:item-list"))
+
+    def test_new_item_defaults_to_requiring_kitchen_preparation(self):
+        """The model default is True — food never silently hides from the cook."""
+        item = Item.objects.create(
+            name="Porção", category=self.category, price=Decimal("20.00"), stock=10
+        )
+        self.assertTrue(item.requires_kitchen_preparation)
+
+    def test_edit_persists_kitchen_preparation_off(self):
+        """Saving with the switch unchecked stores False and survives a reload."""
+        resp = self.client.post(
+            reverse("inventory:item-update", args=[self.item.pk]),
+            {
+                "name": "Cerveja",
+                "category": self.category.pk,
+                "price": "8.50",
+                "stock": "12",
+                "is_active": "on",
+                # requires_kitchen_preparation left off -> False
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.requires_kitchen_preparation)
+
+        # A second edit turning it back on restores True.
+        resp = self.client.post(
+            reverse("inventory:item-update", args=[self.item.pk]),
+            {
+                "name": "Cerveja",
+                "category": self.category.pk,
+                "price": "8.50",
+                "stock": "12",
+                "is_active": "on",
+                "requires_kitchen_preparation": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.item.refresh_from_db()
+        self.assertTrue(self.item.requires_kitchen_preparation)
+
+    def test_item_form_shows_the_kitchen_switch(self):
+        resp = self.client.get(reverse("inventory:item-create"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Requer preparo na cozinha")
+        self.assertContains(resp, 'name="requires_kitchen_preparation"')
+
+    def test_item_list_shows_kitchen_column(self):
+        resp = self.client.get(reverse("inventory:item-list"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Cozinha")
 
 
 class CategoryModelTests(TestCase):
@@ -418,6 +474,34 @@ class SeedDemoCommandTests(TestCase):
     def test_reports_what_it_created(self):
         output = self.run_command()
         self.assertIn("Itens criados:", output)
+
+    def test_drinks_seeded_without_kitchen_preparation(self):
+        """Bebidas (alcoólicas e não alcoólicas) are served directly; comidas go to the kitchen."""
+        self.run_command()
+        drinks = Item.objects.filter(
+            category__name__in=[NAO_ALCOOLICAS, ALCOOLICAS]
+        )
+        self.assertTrue(drinks.exists())
+        for item in drinks:
+            with self.subTest(item=item.name):
+                self.assertFalse(item.requires_kitchen_preparation)
+        comidas = Item.objects.filter(category__name=COMIDAS)
+        self.assertTrue(comidas.exists())
+        for item in comidas:
+            with self.subTest(item=item.name):
+                self.assertTrue(item.requires_kitchen_preparation)
+
+    def test_rerun_leaves_existing_kitchen_flag_untouched(self):
+        """Seed is additive: a hand-edited flag survives a second run."""
+        self.run_command()
+        edited = Item.objects.filter(category__name=COMIDAS).first()
+        edited.requires_kitchen_preparation = False
+        edited.save()
+
+        self.run_command()
+
+        edited.refresh_from_db()
+        self.assertFalse(edited.requires_kitchen_preparation)
 
     def test_stock_page_lists_the_seeded_catalogue(self):
         self.run_command()

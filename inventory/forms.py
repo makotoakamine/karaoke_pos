@@ -27,10 +27,13 @@ class ItemForm(forms.ModelForm):
 
     class Meta:
         model = Item
-        fields = ["name", "category", "price", "stock", "is_active"]
+        fields = ["name", "category", "price", "stock", "is_active", "requires_kitchen_preparation"]
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-control"}),
             "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "requires_kitchen_preparation": forms.CheckboxInput(
+                attrs={"class": "form-check-input"}
+            ),
         }
 
     category = forms.ModelChoiceField(
