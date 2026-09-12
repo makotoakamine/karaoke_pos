@@ -19,4 +19,9 @@ urlpatterns = [
         views.OrderPrintView.as_view(),
         name="order-print",
     ),
+    path(
+        "cozinha/linhas/<int:pk>/pronto/",
+        views.OrderItemPreparedView.as_view(),
+        name="order-item-prepared",
+    ),
 ]

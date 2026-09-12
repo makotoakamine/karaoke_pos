@@ -549,6 +549,7 @@ class OrderPickerDataTests(TestCase):
                 "kitchen-queue",
                 "order-done",
                 "order-print",
+                "order-item-prepared",
             },
         )
 
@@ -2332,3 +2333,357 @@ class OrderLineNotesTests(TestCase):
         # One kitchen line, two units — the serve-direct 3 units are excluded.
         self.assertTrue(itens_line.rstrip().endswith("1"), itens_line)
         self.assertTrue(unidades_line.rstrip().endswith("2"), unidades_line)
+
+
+class OrderItemPreparedTests(TestCase):
+    """Acceptance tests for the per-line prepared flag on kitchen lines (#236).
+
+    The kitchen can cross off individual lines of an order card instead of
+    only the whole order at once. These tests pin the flag's default, the
+    toggle endpoint's contract (POST-only, login-required, JSON reply, 404 on
+    unknown lines), the guarantee that toggling never touches
+    ``Order.status``, and the two render paths (full kitchen page and polling
+    fragment) where a done line stays visible but clearly marked as done.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab_a = Tab.objects.create(name="Comanda Ana")
+        cls.table_a = Table.objects.create(name="Mesa 1", seats=4)
+        cls.category = Category.objects.create(name="bebidas")
+        cls.kitchen_item = Item.objects.create(
+            name="Batata frita",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=10,
+            requires_kitchen_preparation=True,
+        )
+        cls.other_kitchen_item = Item.objects.create(
+            name="Polenta frita",
+            category=cls.category,
+            price=Decimal("20.00"),
+            stock=8,
+            requires_kitchen_preparation=True,
+        )
+        cls.serve_direct_item = Item.objects.create(
+            name="Refrigerante lata",
+            category=cls.category,
+            price=Decimal("6.00"),
+            stock=30,
+            requires_kitchen_preparation=False,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _make_order(self, lines, table=None, status=Order.Status.OPEN):
+        order = Order.objects.create(tab=self.tab_a, table=table, status=status)
+        for item, qty, notes in lines:
+            OrderItem.objects.create(
+                order=order,
+                item=item,
+                quantity=qty,
+                unit_price=item.price,
+                notes=notes,
+            )
+        return order
+
+    def _toggle(self, line):
+        return self.client.post(
+            reverse("orders:order-item-prepared", args=[line.pk])
+        )
+
+    # --- acceptance: the model's new field ---------------------------------
+
+    def test_a_new_order_line_defaults_to_not_prepared(self):
+        order = Order.objects.create(tab=self.tab_a)
+        line = OrderItem.objects.create(
+            order=order,
+            item=self.kitchen_item,
+            quantity=1,
+            unit_price=Decimal("25.00"),
+        )
+        line.refresh_from_db()
+        self.assertFalse(line.is_prepared)
+
+    # --- acceptance: the toggle flips the flag both directions -------------
+
+    def test_toggle_flips_the_flag_to_true(self):
+        order = self._make_order([(self.kitchen_item, 2, "")])
+        line = order.items.get()
+        self.assertFalse(line.is_prepared)
+
+        resp = self._toggle(line)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["success"])
+        self.assertTrue(resp.json()["is_prepared"])
+
+        line.refresh_from_db()
+        self.assertTrue(line.is_prepared)
+
+    def test_toggle_flips_the_flag_back_to_false(self):
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        line.is_prepared = True
+        line.save(update_fields=["is_prepared"])
+
+        resp = self._toggle(line)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["is_prepared"])
+
+        line.refresh_from_db()
+        self.assertFalse(line.is_prepared)
+
+    def test_toggle_only_persists_the_is_prepared_field(self):
+        """The flag flips without disturbing the line's other fields."""
+        order = self._make_order([(self.kitchen_item, 3, "bem passada")])
+        line = order.items.get()
+        original_unit_price = line.unit_price
+        original_notes = line.notes
+
+        self._toggle(line)
+        line.refresh_from_db()
+        self.assertEqual(line.unit_price, original_unit_price)
+        self.assertEqual(line.notes, original_notes)
+        self.assertEqual(line.quantity, 3)
+        self.assertTrue(line.is_prepared)
+
+    # --- acceptance: the toggle endpoint requires POST and login -----------
+
+    def test_anonymous_toggle_redirected_to_login(self):
+        self.client.logout()
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        resp = self._toggle(line)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("next=", resp["Location"])
+        line.refresh_from_db()
+        self.assertFalse(line.is_prepared)
+
+    def test_get_on_the_toggle_endpoint_is_not_allowed(self):
+        """The endpoint is POST-only, mirroring ``OrderDoneView``/``OrderPrintView``."""
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        resp = self.client.get(
+            reverse("orders:order-item-prepared", args=[line.pk])
+        )
+        self.assertEqual(resp.status_code, 405)
+        line.refresh_from_db()
+        self.assertFalse(line.is_prepared)
+
+    # --- acceptance: unknown line ids are a plain 404 ----------------------
+
+    def test_toggle_on_unknown_line_returns_404(self):
+        resp = self.client.post(
+            reverse("orders:order-item-prepared", args=[999999])
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    # --- acceptance: toggling never changes order.status -------------------
+
+    def test_toggle_leaves_order_status_untouched(self):
+        order = self._make_order(
+            [(self.kitchen_item, 2, ""), (self.other_kitchen_item, 1, "")]
+        )
+        self.assertEqual(order.status, Order.Status.OPEN)
+        for line in order.items.all():
+            self._toggle(line)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+
+    def test_toggling_all_lines_does_not_take_the_card_off_the_screen(self):
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        self._toggle(line)
+        # The order stays open and on the kitchen screen — only "Pronto" moves
+        # it to done.
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", body)
+
+    def test_done_button_behaves_exactly_as_before(self):
+        """``OrderDoneView`` is unaffected by the per-line flag: the "Pronto"
+        footer button still flips ``Order.status`` to ``done`` and the card
+        leaves the screen via that button alone, never via a line toggle."""
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        # Mark the line prepared first.
+        self._toggle(line)
+        # Then hit the "Pronto" button — the order is done and gone.
+        resp = self.client.post(reverse("orders:order-done", args=[order.pk]))
+        self.assertEqual(resp.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DONE)
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn(f"#{order.pk}", body)
+
+    # --- acceptance: a toggled line renders with the done marker -----------
+
+    def test_kitchen_page_renders_a_toggle_button_per_kitchen_line(self):
+        order = self._make_order([(self.kitchen_item, 2, "")])
+        line = order.items.get()
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(
+            reverse("orders:order-item-prepared", args=[line.pk]), body
+        )
+        self.assertIn("kitchen-btn-line", body)
+
+    def test_polling_fragment_renders_a_toggle_button_per_kitchen_line(self):
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn(
+            reverse("orders:order-item-prepared", args=[line.pk]), body
+        )
+
+    def test_an_unmarked_line_renders_without_the_done_class(self):
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(
+            f'data-line-pk="{line.pk}"', body
+        )
+        # The <li> does not carry the is-prepared class. (The page's <script>
+        # mentions "is-prepared" as a string literal, so check the card markup
+        # rather than the whole page body.)
+        li = body.split(f'data-line-pk="{line.pk}"', 1)[0].rsplit("<li", 1)[-1]
+        self.assertNotIn("is-prepared", li)
+
+    def test_a_marked_line_renders_with_the_done_class_on_the_kitchen_page(self):
+        order = self._make_order([(self.kitchen_item, 1, "com sal")])
+        line = order.items.get()
+        line.is_prepared = True
+        line.save(update_fields=["is_prepared"])
+
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("is-prepared", body)
+        self.assertIn(f'data-line-pk="{line.pk}"', body)
+        # The line's item name and note are still on the card — struck through
+        # by the is-prepared class, not removed.
+        self.assertIn("Batata frita", body)
+        self.assertIn("com sal", body)
+
+    def test_a_marked_line_renders_with_the_done_class_on_the_polling_fragment(
+        self,
+    ):
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        line.is_prepared = True
+        line.save(update_fields=["is_prepared"])
+
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn("is-prepared", body)
+        self.assertIn(f'data-line-pk="{line.pk}"', body)
+        self.assertIn("Batata frita", body)
+
+    def test_the_toggle_survives_the_polling_refresh(self):
+        """Server truth wins on the next refresh: a toggled line re-renders
+        marked, an untoggled one re-renders unmarked — no flicker or loss."""
+        order = self._make_order(
+            [(self.kitchen_item, 1, ""), (self.other_kitchen_item, 1, "")]
+        )
+        line_a, line_b = order.items.order_by("pk")
+
+        # Toggle only line_a.
+        self._toggle(line_a)
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        # line_a is marked, line_b is not.
+        a_chunk = body.split(f'data-line-pk="{line_a.pk}"', 1)[0].rsplit(
+            "<li", 1
+        )[-1]
+        b_chunk = body.split(f'data-line-pk="{line_b.pk}"', 1)[0].rsplit(
+            "<li", 1
+        )[-1]
+        self.assertIn("is-prepared", a_chunk)
+        self.assertNotIn("is-prepared", b_chunk)
+
+        # Untoggle line_a and re-poll: it comes back unmarked.
+        self._toggle(line_a)
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertNotIn("is-prepared", body)
+
+    def test_the_done_marker_only_appears_on_kitchen_card_lines(self):
+        """Serve-direct lines never reach a kitchen surface, so they carry no
+        toggle and no ``is-prepared`` class anywhere."""
+        order = self._make_order(
+            [(self.kitchen_item, 1, ""), (self.serve_direct_item, 2, "")]
+        )
+        serve_direct_line = order.items.get(item=self.serve_direct_item)
+        for url in (reverse("orders:kitchen"), reverse("orders:kitchen-queue")):
+            body = self.client.get(url).content.decode()
+            self.assertNotIn(
+                f'data-line-pk="{serve_direct_line.pk}"', body
+            )
+            self.assertNotIn(
+                reverse(
+                    "orders:order-item-prepared", args=[serve_direct_line.pk]
+                ),
+                body,
+            )
+
+    def test_a_serve_direct_only_order_never_reaches_the_kitchen_surfaces(self):
+        """A drinks-only order never renders a card, so no toggle appears."""
+        order = self._make_order([(self.serve_direct_item, 1, "")])
+        for url in (reverse("orders:kitchen"), reverse("orders:kitchen-queue")):
+            body = self.client.get(url).content.decode()
+            self.assertNotIn(f"#{order.pk}", body)
+            self.assertNotIn("kitchen-btn-line", body)
+
+    # --- acceptance: the kitchen page carries the delegated toggle listener --
+
+    def test_kitchen_page_delegated_listener_handles_line_toggles(self):
+        """The page's script handles ``data-prepared-url`` as well as print."""
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("data-prepared-url", body)
+        self.assertIn("handleLineToggle", body)
+        self.assertIn("is-prepared", body)
+
+    # --- acceptance: the is-prepared style is defined in the project's SCSS --
+
+    def test_the_is_prepared_classes_are_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".is-prepared", scss)
+        self.assertIn(".kitchen-btn-line", scss)
+        # The done marker strikes through the line and its note.
+        self.assertIn("line-through", scss)
+
+    # --- acceptance: printed tickets are unchanged by this task -------------
+
+    def test_the_prepared_flag_does_not_appear_on_the_printed_ticket(self):
+        """Paper rendering of the flag ships in #237; today's ticket is
+        unchanged by marking a line prepared."""
+        order = self._make_order([(self.kitchen_item, 1, "")])
+        line = order.items.get()
+        line.is_prepared = True
+        line.save(update_fields=["is_prepared"])
+
+        dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, dump_dir, True)
+        with override_settings(
+            KARAOKE_PRINTER_DRY_RUN=True,
+            KARAOKE_PRINTER_DUMP_DIR=dump_dir,
+        ):
+            self.client.post(reverse("orders:order-print", args=[order.pk]))
+            text = (
+                dump_dir / f"pedido-{order.pk}-cozinha.txt"
+            ).read_text(encoding="utf-8")
+        self.assertIn("1x Batata frita", text)
+        # The ticket's "PREPARAR" section header is unchanged from #234 — the
+        # prepared flag does not add any new "preparado"/"feito"/"ok" marker,
+        # and no strikethrough ESC/POS sequence reaches the paper yet.
+        self.assertNotIn("preparado", text.lower())
+        self.assertNotIn("feito", text.lower())

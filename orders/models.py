@@ -95,6 +95,15 @@ class OrderItem(models.Model):
     kitchen screen and the printed ticket. A line without a note is the normal
     case, so the field is blank with an empty default and never ``NULL``: every
     reader can treat it as a plain string.
+
+    ``is_prepared`` (#236) is the kitchen's per-line "done" flag, off by
+    default for every new order line. The kitchen screen offers a toggle per
+    line that flips it; a done line stays on the card, visibly struck through,
+    and never disappears. Only the kitchen surfaces expose the toggle — the
+    flag exists on every line, but the kitchen prefetch (#234) already
+    restricts kitchen-facing rows to preparation lines, so serve-direct lines
+    never reach a surface that renders one. Toggling a line never changes
+    ``Order.status``; only the "Pronto" footer button does that.
     """
 
     order = models.ForeignKey(
@@ -127,6 +136,16 @@ class OrderItem(models.Model):
         blank=True,
         default="",
         help_text='Pedido especial do cliente para esta linha ("com gelo e limão").',
+    )
+    is_prepared = models.BooleanField(
+        "preparado",
+        default=False,
+        help_text=(
+            "Marcado pela cozinha quando esta linha está pronta. O card de "
+            "pedidos da cozinha (#236) oferece um botão por linha para "
+            "alternar este estado; a linha nunca some do card, apenas é "
+            "riscada. A impressão em papel do flag virá em #237."
+        ),
     )
 
     class Meta:

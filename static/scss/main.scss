@@ -986,6 +986,49 @@ h1, h2, h3, h4, h5, h6,
     line-height: 1.3;
     color: var(--bs-warning-text-emphasis, #{tint-color($warning, 30%)});
   }
+
+  // A line the kitchen has crossed off (#236): the item name and its note are
+  // struck through and dimmed so "done" is obvious from across the room, but
+  // the line stays on the card — it never disappears. Paper-style marking of
+  // the same flag will ship in #237.
+  > li.is-prepared {
+    .kitchen-line-name,
+    .kitchen-line-note {
+      text-decoration: line-through;
+      color: var(--bs-secondary-color);
+    }
+
+    // The toggle button reads as "undo" on a done line: muted, not gone.
+    .kitchen-btn-line {
+      --bs-btn-color: var(--bs-secondary-color);
+      --bs-btn-border-color: var(--bs-border-color);
+      --bs-btn-hover-color: #{tint-color($primary, 40%)};
+      --bs-btn-hover-border-color: #{$primary};
+    }
+  }
+}
+
+// Per-line toggle button on a kitchen card (#236): a small, square uppercase
+// target that sits at the right of the line, sized to its own text so it does
+// not stretch the row. It reuses the print button's outline treatment so the
+// footer and the line rows read as one family.
+.kitchen-btn-line {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: #{tint-color($success, 40%)};
+  --bs-btn-hover-bg: transparent;
+  --bs-btn-hover-border-color: #{$success};
+  --bs-btn-active-color: #{tint-color($success, 40%)};
+  --bs-btn-active-bg: transparent;
+  --bs-btn-active-border-color: #{$success};
+
+  flex: 0 0 auto;
+  padding: .35rem .7rem;
+  font-size: .9rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 // Footer actions: "Pronto" takes the room it always had and "Imprimir" sits

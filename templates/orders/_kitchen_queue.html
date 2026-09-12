@@ -28,15 +28,34 @@
                 &middot; {{ order.created_at|date:"H:i" }}
               </p>
 
-              {% comment %}The waiter's note (#229) hangs under its item, and
-              only when the line actually has one — a line without a note is
-              the normal case and must not grow an empty row.{% endcomment %}
+              {% comment %}Each line carries its own toggle button (#236) so
+              the kitchen can cross off individual lines instead of only the
+              whole order at once. The button carries a ``data-prepared-url``
+              to the toggle endpoint; the kitchen page's delegated click
+              listener POSTs via fetch, updates only that line's ``is-prepared``
+              class in place, and reuses the notice/hold mechanism so the
+              5-second polling refresh does not wipe a toggle the cook just
+              made (server truth wins on the next refresh). A done line and
+              its note render visibly marked (strikethrough/dimmed via the
+              ``is-prepared`` class) but the line stays on the card, never
+              disappears. Serve-direct lines never reach this template (the
+              kitchen prefetch in _open_orders_queryset filters them out), so
+              no special-casing is needed here. The waiter's note (#229) hangs
+              under its item, and only when the line actually has one — a line
+              without a note is the normal case and must not grow an empty
+              row.{% endcomment %}
               <ul class="kitchen-lines">
                 {% for line in order.items.all %}
-                  <li>
+                  <li class="kitchen-line{% if line.is_prepared %} is-prepared{% endif %}" data-line-pk="{{ line.pk }}">
                     <div class="kitchen-line-main">
-                      <span class="fw-semibold">{{ line.item.name|escape }}</span>
+                      <span class="fw-semibold kitchen-line-name">{{ line.item.name|escape }}</span>
                       <span class="badge bg-secondary">{{ line.quantity }}x</span>
+                      <button type="button"
+                              class="btn btn-outline-secondary kitchen-btn-line"
+                              data-prepared-url="{% url 'orders:order-item-prepared' line.pk %}"
+                              aria-pressed="{% if line.is_prepared %}true{% else %}false{% endif %}">
+                        {% if line.is_prepared %}{% trans "Desmarcar" %}{% else %}{% trans "Pronto" %}{% endif %}
+                      </button>
                     </div>
                     {% if line.notes %}
                       <p class="kitchen-line-note">{{ line.notes|escape }}</p>

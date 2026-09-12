@@ -403,3 +403,34 @@ class OrderPrintView(LoginRequiredMixin, View):
                 ),
             }
         )
+
+
+class OrderItemPreparedView(LoginRequiredMixin, View):
+    """POST-only endpoint that toggles a single order line's prepared flag.
+
+    Reached from the per-line toggle button on each kitchen card (#236). It
+    flips the :attr:`OrderItem.is_prepared` flag and returns a small JSON
+    payload mirroring :class:`OrderPrintView`'s contract — ``{"success": True,
+    "is_prepared": <bool>}`` — so the kitchen JavaScript can update only that
+    line's class in place without a reload. An unknown line id is a plain 404,
+    the same way :class:`OrderDoneView` treats an unknown order.
+
+    Toggling a line never changes ``Order.status``: only the "Pronto" footer
+    button (:class:`OrderDoneView`) takes a card off the kitchen screen. The
+    line stays on the card, visibly marked as done; the next 5-second polling
+    refresh re-renders it from server truth, so the toggle survives without
+    flicker or loss.
+
+    Serve-direct lines never reach a kitchen surface (the prefetch in
+    :func:`_kitchen_items_prefetch` filters them out), so this view does not
+    need to special-case them — a serve-direct line's id is still a valid
+    ``OrderItem``, but no kitchen-facing surface ever renders a toggle for it.
+    """
+
+    def post(self, request, pk, *args, **kwargs):
+        line = get_object_or_404(OrderItem, pk=pk)
+        line.is_prepared = not line.is_prepared
+        line.save(update_fields=["is_prepared"])
+        return JsonResponse(
+            {"success": True, "is_prepared": line.is_prepared}
+        )

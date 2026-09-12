@@ -98,11 +98,22 @@
   }
 
   // One delegated listener on the grid container, which is never itself
-  // replaced — so the button keeps working on cards that arrived by polling.
+  // replaced — so the buttons keep working on cards that arrived by polling.
   queueEl.addEventListener("click", function (event) {
-    var button = event.target.closest("[data-print-url]");
-    if (!button) return;
+    var printButton = event.target.closest("[data-print-url]");
+    if (printButton) {
+      handlePrint(printButton);
+      return;
+    }
 
+    var lineButton = event.target.closest("[data-prepared-url]");
+    if (lineButton) {
+      handleLineToggle(lineButton);
+      return;
+    }
+  });
+
+  function handlePrint(button) {
     var label = button.textContent;
     button.disabled = true;
     button.textContent = "Enviando…";
@@ -118,7 +129,40 @@
         button.disabled = false;
         button.textContent = label;
       });
-  });
+  }
+
+  /** Toggle a single kitchen line's prepared flag (#236).
+   *
+   * The POST flips the flag on the server; on success the line's ``<li>``
+   * gains or loses the ``is-prepared`` class in place and the button's label
+   * and ``aria-pressed`` follow. The hold/notice mechanism is reused so the
+   * 5-second polling refresh does not wipe a toggle the cook just made:
+   * ``holdUntil`` is pushed out, the next refresh is skipped, and the one
+   * after that re-renders from server truth (which already carries the new
+   * flag). The line never disappears from the card. */
+  function handleLineToggle(button) {
+    var li = button.closest(".kitchen-line");
+    if (!li) return;
+
+    button.disabled = true;
+
+    postJSON(button.dataset.preparedUrl)
+      .then(function (body) {
+        var prepared = !!body.is_prepared;
+        li.classList.toggle("is-prepared", prepared);
+        button.setAttribute("aria-pressed", prepared ? "true" : "false");
+        button.textContent = prepared ? "Desmarcar" : "Pronto";
+        // Hold the next poll briefly so server truth has time to settle and
+        // the toggle is not wiped the instant the cook taps it.
+        holdUntil = Date.now() + 1500;
+      })
+      .catch(function (error) {
+        notice(button, error.message, "error");
+      })
+      .finally(function () {
+        button.disabled = false;
+      });
+  }
 
   setInterval(refresh, INTERVAL_MS);
 })();
