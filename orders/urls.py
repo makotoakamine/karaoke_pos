@@ -14,4 +14,9 @@ urlpatterns = [
         views.OrderDoneView.as_view(),
         name="order-done",
     ),
+    path(
+        "<int:pk>/imprimir/",
+        views.OrderPrintView.as_view(),
+        name="order-print",
+    ),
 ]

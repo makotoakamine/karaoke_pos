@@ -83,6 +83,35 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Thermal printer (ESC/POS) — kitchen tickets (#228)
+# Every value comes from the environment so the machine sitting next to the
+# printer can be configured without touching code. See the README for the full
+# description of each variable.
+
+# CUPS queue name (Linux) or Windows printer name. When set, it is tried before
+# the list of default names.
+KARAOKE_PRINTER_NAME = os.getenv("KARAOKE_PRINTER_NAME", "")
+
+# Path to the device directly (e.g. /dev/usb/lp0 on Linux, COM3 on Windows).
+KARAOKE_PRINTER_DEVICE = os.getenv("KARAOKE_PRINTER_DEVICE", "")
+
+# In development there is no printer: write the ticket to disk instead of
+# failing, so the kitchen screen can still be exercised end to end.
+KARAOKE_PRINTER_DRY_RUN = os.getenv("KARAOKE_PRINTER_DRY_RUN", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+KARAOKE_PRINTER_DUMP_DIR = Path(
+    os.getenv("KARAOKE_PRINTER_DUMP_DIR", str(BASE_DIR / "receipts_out"))
+)
+
+# Paper width in characters. 48 = 80mm roll (Elgin i9 / Bematech). The left
+# margin pushes the text off the very edge of the paper; the content then
+# occupies KARAOKE_RECEIPT_WIDTH - KARAOKE_RECEIPT_LEFT_MARGIN columns.
+KARAOKE_RECEIPT_WIDTH = int(os.getenv("KARAOKE_RECEIPT_WIDTH", "48"))
+KARAOKE_RECEIPT_LEFT_MARGIN = int(os.getenv("KARAOKE_RECEIPT_LEFT_MARGIN", "2"))
+
 # Authentication
 # The site root URL ("/") doubles as the branded landing/login page, so
 # unauthenticated visitors of any protected page are redirected there.

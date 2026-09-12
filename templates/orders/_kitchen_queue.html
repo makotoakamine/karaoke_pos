@@ -37,13 +37,28 @@
               </ul>
             </div>
 
+            {% comment %}"Pronto" stays the primary action and keeps the full
+            width it had; "Imprimir" sits beside it as a quieter outline button
+            so nobody hits it by reflex. The print button is a plain
+            <button data-print-url> with no form of its own: the kitchen page
+            owns a single delegated click listener, which is what keeps it
+            working on cards that arrived through the polling refresh.
+            {% endcomment %}
             <div class="card-footer">
-              <form method="post" action="{% url 'orders:order-done' order.pk %}">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-success kitchen-btn-done">
-                  {% trans "Pronto" %}
+              <div class="kitchen-card-actions">
+                <form method="post" action="{% url 'orders:order-done' order.pk %}">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-success kitchen-btn-done">
+                    {% trans "Pronto" %}
+                  </button>
+                </form>
+                <button type="button"
+                        class="btn btn-outline-secondary kitchen-btn-print"
+                        data-print-url="{% url 'orders:order-print' order.pk %}">
+                  {% trans "Imprimir" %}
                 </button>
-              </form>
+              </div>
+              <p class="kitchen-print-notice d-none" role="status" aria-live="polite"></p>
             </div>
           </div>
         </div>
