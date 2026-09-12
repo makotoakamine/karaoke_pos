@@ -32,6 +32,9 @@ A interface está em português brasileiro (pt-br).
   - `inventory/migrations/0003_seed_starter_categories.py` – data migration
     que semeia as categorias iniciais ("bebidas não alcoólicas", "bebidas
     alcoólicas" e "comidas"), para que um clone novo já suba usável.
+  - `inventory/management/commands/seed_demo.py` – comando
+    `uv run manage.py seed_demo`, que semeia um catálogo de demonstração em
+    pt-BR (ver "Dados de demonstração" abaixo).
   - `inventory/admin.py` – registra `Item` e `Category` no admin do Django
     como fallback.
 - **`tables/`** – app de gestão de mesas (#108).
@@ -165,6 +168,35 @@ Abra <http://127.0.0.1:8000/> no navegador. A página de landing/login deve
 carregar estilizada pelo Bootstrap compilado localmente, com o tema escuro
 aplicado (fundo quase preto, barra de navegação plana com borda inferior) e o
 formulário de acesso centralizado.
+
+## Dados de demonstração
+
+Para mostrar o sistema funcionando sem cadastrar item por item na mão, o app
+`inventory` traz um comando que popula o catálogo com ~17 itens em pt-BR
+plausíveis para um karaokê (refrigerante lata, cerveja long neck, porção de
+batata frita, ...), distribuídos pelas três categorias iniciais:
+
+```bash
+uv run manage.py seed_demo
+```
+
+O comando imprime um resumo do que criou e do que já existia. Depois de rodar,
+`/estoque/` lista os itens com categoria, preço e estoque, e `/pedidos/novo/`
+já mostra os filtros por categoria com produtos para vender. Um dos itens é
+semeado como inativo, de propósito, para deixar visível o caminho de item fora
+do catálogo de vendas.
+
+Pontos importantes:
+
+- **É seguro rodar de novo.** Tudo passa por `get_or_create` — categorias por
+  nome e itens por `(nome, categoria)` — então uma segunda execução não cria
+  duplicatas e apenas relata que tudo já existia.
+- **Não sobrescreve nada.** Se você editar o preço ou o estoque de um item
+  semeado, a edição permanece intacta nas execuções seguintes. O comando nunca
+  apaga nem atualiza linhas existentes (não há `--flush`).
+- **Reaproveita as categorias da migração 0003.** As categorias "bebidas não
+  alcoólicas", "bebidas alcoólicas" e "comidas" são buscadas pelo nome, nunca
+  por PK, então `/estoque/categorias/` não ganha nomes duplicados.
 
 ## Conta de administrador
 

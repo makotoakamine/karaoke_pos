@@ -1,7 +1,9 @@
 """Functional tests for the inventory app covering the task's acceptance criteria."""
 from decimal import Decimal
+from io import StringIO
 
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
@@ -343,3 +345,101 @@ class CategoryInUseTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.item.refresh_from_db()
         self.assertEqual(self.item.category, other)
+
+
+class SeedDemoCommandTests(TestCase):
+    """``manage.py seed_demo`` populates a demo catalogue and is re-runnable (#227)."""
+
+    def run_command(self):
+        out = StringIO()
+        call_command("seed_demo", stdout=out)
+        return out.getvalue()
+
+    def test_seeds_items_across_the_three_starter_categories(self):
+        self.run_command()
+        names = set(Category.objects.values_list("name", flat=True))
+        self.assertEqual(
+            names,
+            {"bebidas não alcoólicas", "bebidas alcoólicas", "comidas"},
+        )
+        for name in names:
+            with self.subTest(category=name):
+                self.assertGreater(Category.objects.get(name=name).items.count(), 0)
+        self.assertGreaterEqual(Item.objects.count(), 12)
+        self.assertLessEqual(Item.objects.count(), 18)
+
+    def test_reuses_the_categories_from_migration_0003(self):
+        """Rows already exist from the data migration; none may be duplicated."""
+        before = {c.pk: c.name for c in Category.objects.all()}
+        self.assertEqual(len(before), 3, "migration 0003 should have seeded 3 rows")
+        self.run_command()
+        after = {c.pk: c.name for c in Category.objects.all()}
+        self.assertEqual(before, after)
+
+    def test_seeded_items_have_sensible_prices_and_stock(self):
+        self.run_command()
+        for item in Item.objects.all():
+            with self.subTest(item=item.name):
+                self.assertGreater(item.price, Decimal("0"))
+                self.assertEqual(item.price, item.price.quantize(Decimal("0.01")))
+                self.assertGreaterEqual(item.stock, 10)
+                self.assertLessEqual(item.stock, 100)
+
+    def test_at_least_one_seeded_item_is_inactive(self):
+        self.run_command()
+        self.assertTrue(Item.objects.filter(is_active=False).exists())
+        self.assertTrue(Item.objects.filter(is_active=True).exists())
+
+    def test_second_invocation_creates_nothing_new(self):
+        self.run_command()
+        items = {(i.pk, i.name, i.category_id) for i in Item.objects.all()}
+        categories = set(Category.objects.values_list("pk", flat=True))
+
+        output = self.run_command()
+
+        self.assertEqual({(i.pk, i.name, i.category_id) for i in Item.objects.all()}, items)
+        self.assertEqual(set(Category.objects.values_list("pk", flat=True)), categories)
+        self.assertIn("já existiam", output)
+
+    def test_rerun_leaves_a_hand_edited_item_untouched(self):
+        self.run_command()
+        edited = Item.objects.filter(is_active=True).first()
+        edited.price = Decimal("123.45")
+        edited.stock = 99
+        edited.save()
+
+        self.run_command()
+
+        edited.refresh_from_db()
+        self.assertEqual(edited.price, Decimal("123.45"))
+        self.assertEqual(edited.stock, 99)
+
+    def test_reports_what_it_created(self):
+        output = self.run_command()
+        self.assertIn("Itens criados:", output)
+
+    def test_stock_page_lists_the_seeded_catalogue(self):
+        self.run_command()
+        user = User.objects.create_user("seeder", password="secret123")
+        self.client.force_login(user)
+        resp = self.client.get(reverse("inventory:item-list"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        for item in Item.objects.all():
+            with self.subTest(item=item.name):
+                self.assertIn(item.name, body)
+                self.assertIn(item.category.name, body)
+
+    def test_order_page_offers_the_seeded_items_and_category_filters(self):
+        self.run_command()
+        user = User.objects.create_user("seeder", password="secret123")
+        self.client.force_login(user)
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        for item in Item.objects.filter(is_active=True, stock__gt=0):
+            with self.subTest(item=item.name):
+                self.assertIn(item.name, body)
+        for name in ["bebidas não alcoólicas", "bebidas alcoólicas", "comidas"]:
+            with self.subTest(category=name):
+                self.assertIn(name, body)
