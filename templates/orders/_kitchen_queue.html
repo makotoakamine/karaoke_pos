@@ -86,6 +86,19 @@
                   {% trans "Imprimir" %}
                 </button>
               </div>
+              {% comment %}Persistent auto-print failure notice (#237): when
+              ``order.auto_print_failed`` is True the card carries a red badge
+              that survives the 5-second polling refresh because it comes from
+              the model, not a transient DOM state. The notice clears the next
+              time a successful print (manual or automatic) happens —
+              ``OrderPrintView`` and the on-commit auto-print both flip the
+              flag back to False on success. It rides alongside the transient
+              print notice below, not in place of it.{% endcomment %}
+              {% if order.auto_print_failed %}
+                <p class="kitchen-auto-print-failed" role="alert">
+                  {% trans "Falha na impressão automática — reimprima manualmente" %}
+                </p>
+              {% endif %}
               <p class="kitchen-print-notice d-none" role="status" aria-live="polite"></p>
             </div>
           </div>

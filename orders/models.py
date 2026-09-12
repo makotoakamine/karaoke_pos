@@ -59,6 +59,16 @@ class Order(models.Model):
         default=Status.OPEN,
         help_text="Pedidos novos começam em \"aberta\"; o fluxo de encerramento (#110) a move para \"encerrada\".",
     )
+    auto_print_failed = models.BooleanField(
+        "falha na impressão automática",
+        default=False,
+        help_text=(
+            "Marcado quando a impressão automática na criação do pedido (#237) "
+            "não consegue alcançar a impressora. A cozinha vê um aviso "
+            "vermelho persistente no card até que uma reimpressão (manual ou "
+            "automática) tenha sucesso, momento em que o flag é limpo."
+        ),
+    )
     created_at = models.DateTimeField("criado em", auto_now_add=True)
     updated_at = models.DateTimeField("atualizado em", auto_now=True)
 

@@ -8,7 +8,7 @@ from unittest import mock
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db.models import ProtectedError
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import resolve, reverse
 from django.utils import timezone
 
@@ -2661,11 +2661,10 @@ class OrderItemPreparedTests(TestCase):
         # The done marker strikes through the line and its note.
         self.assertIn("line-through", scss)
 
-    # --- acceptance: printed tickets are unchanged by this task -------------
+    # --- acceptance: printed tickets now carry the [FEITO] marker (#237) ----
 
-    def test_the_prepared_flag_does_not_appear_on_the_printed_ticket(self):
-        """Paper rendering of the flag ships in #237; today's ticket is
-        unchanged by marking a line prepared."""
+    def test_the_prepared_flag_appears_on_the_printed_ticket_as_feito(self):
+        """Since #237 a prepared line is prefixed ``[FEITO]`` on the ticket."""
         order = self._make_order([(self.kitchen_item, 1, "")])
         line = order.items.get()
         line.is_prepared = True
@@ -2681,9 +2680,432 @@ class OrderItemPreparedTests(TestCase):
             text = (
                 dump_dir / f"pedido-{order.pk}-cozinha.txt"
             ).read_text(encoding="utf-8")
+        self.assertIn("[FEITO] 1x Batata frita", text)
+        # The "PREPARAR" section header is unchanged from #234.
+        self.assertIn("PREPARAR", text)
+
+
+@override_settings(KARAOKE_PRINTER_DRY_RUN=True)
+class AutoPrintOnKitchenArrivalTests(TransactionTestCase):
+    """Acceptance tests for auto-print on order creation (#237).
+
+    Uses :class:`TransactionTestCase` because the auto-print fires via
+    :func:`transaction.on_commit`, and those callbacks do not run inside the
+    atomic block that ``TestCase`` wraps every test in. A
+    ``TransactionTestCase`` actually commits, so the on-commit callback fires
+    for real.
+
+    When the site configuration has ``auto_print_on_kitchen_arrival`` on,
+    placing an order with at least one kitchen-prep line calls ``print_raw``
+    once after the transaction commits (label ``pedido-{pk}-cozinha-auto``).
+    Orders with only serve-direct lines never auto-print. With the setting off
+    no order auto-prints at all. A printer failure does not break the waiter's
+    flow: the redirect still happens, the order is saved, and the failure is
+    recorded as ``auto_print_failed`` on the order for the kitchen surface to
+    display.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user("garcom", password="secret123")
+        self.tab = Tab.objects.create(name="Comanda Ana")
+        self.table = Table.objects.create(name="Mesa 7", seats=4)
+        self.category = Category.objects.create(name="bebidas")
+        self.beer = Item.objects.create(
+            name="Cerveja",
+            category=self.category,
+            price=Decimal("8.50"),
+            stock=10,
+            requires_kitchen_preparation=False,
+        )
+        self.fries = Item.objects.create(
+            name="Batata frita",
+            category=self.category,
+            price=Decimal("25.00"),
+            stock=8,
+            requires_kitchen_preparation=True,
+        )
+        self.client.force_login(self.user)
+        self.dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-auto-print-"))
+        self.addCleanup(shutil.rmtree, self.dump_dir, True)
+        patched = override_settings(KARAOKE_PRINTER_DUMP_DIR=self.dump_dir)
+        patched.enable()
+        self.addCleanup(patched.disable)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _config(self, auto_print: bool):
+        from core.models import Configuracao
+
+        Configuracao.objects.update_or_create(
+            pk=1,
+            defaults={"auto_print_on_kitchen_arrival": auto_print},
+        )
+
+    def _post(self, lines):
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item_pk, quantity) in enumerate(lines):
+            data[f"lines-{index}-item"] = item_pk
+            data[f"lines-{index}-quantity"] = str(quantity)
+        return self.client.post(reverse("orders:order-create"), data)
+
+    def _auto_dump_files(self, order):
+        return list(self.dump_dir.glob(f"pedido-{order.pk}-cozinha-auto.*"))
+
+    # --- acceptance: config ON + kitchen line → print_raw once after commit --
+
+    def test_config_on_with_kitchen_line_auto_prints_once(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw") as mock_print:
+            resp = self._post([(self.fries.pk, 2)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        # TransactionTestCase commits for real, so the on_commit callback
+        # fires and the auto-print runs within the test.
+        self.assertEqual(mock_print.call_count, 1)
+        label = mock_print.call_args.kwargs.get("label", "")
+        self.assertEqual(label, f"pedido-{order.pk}-cozinha-auto")
+
+    def test_config_on_with_kitchen_line_writes_auto_dump_file(self):
+        self._config(True)
+        self._post([(self.fries.pk, 1)])
+        order = Order.objects.get()
+        files = self._auto_dump_files(order)
+        self.assertEqual(len(files), 2)  # .bin + .txt
+        self.assertTrue((self.dump_dir / f"pedido-{order.pk}-cozinha-auto.bin").exists())
+
+    # --- acceptance: config ON + only serve-direct → print_raw zero times ---
+
+    def test_config_on_with_only_serve_direct_lines_does_not_auto_print(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw") as mock_print:
+            resp = self._post([(self.beer.pk, 2)])
+        self.assertEqual(resp.status_code, 302)
+        order = Order.objects.get()
+        self.assertEqual(order.status, "done")
+        mock_print.assert_not_called()
+
+    # --- acceptance: config OFF → no auto-print for any order ---------------
+
+    def test_config_off_with_kitchen_line_does_not_auto_print(self):
+        self._config(False)
+        with mock.patch("orders.views.print_raw") as mock_print:
+            resp = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        mock_print.assert_not_called()
+
+    def test_config_off_with_serve_direct_does_not_auto_print(self):
+        self._config(False)
+        with mock.patch("orders.views.print_raw") as mock_print:
+            resp = self._post([(self.beer.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        mock_print.assert_not_called()
+
+    # --- acceptance: printer failure does not break order creation ----------
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_printer_failure_does_not_break_order_creation(self):
+        self._config(True)
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ):
+            resp = self._post([(self.fries.pk, 1)])
+        # The waiter still gets the success redirect.
+        self.assertEqual(resp.status_code, 302)
+        # The order is saved.
+        order = Order.objects.get()
+        self.assertEqual(order.status, "open")
+        # The failure is recorded on the order.
+        order.refresh_from_db()
+        self.assertTrue(order.auto_print_failed)
+
+    @override_settings(KARAOKE_PRINTER_DRY_RUN=False)
+    def test_successful_auto_print_clears_the_failure_flag(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw") as mock_print:
+            self._post([(self.fries.pk, 1)])
+        order = Order.objects.get()
+        order.refresh_from_db()
+        self.assertFalse(order.auto_print_failed)
+        self.assertEqual(mock_print.call_count, 1)
+
+    # --- acceptance: the waiter's flow is unchanged -------------------------
+
+    def test_the_wizard_redirect_is_the_same_as_before(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw"):
+            resp = self._post([(self.fries.pk, 1)])
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"], reverse("orders:order-create"))
+
+    def test_stock_is_still_decremented_with_auto_print_on(self):
+        self._config(True)
+        with mock.patch("orders.views.print_raw"):
+            self._post([(self.fries.pk, 2)])
+        self.fries.refresh_from_db()
+        self.assertEqual(self.fries.stock, 6)
+
+
+class AutoPrintFailureNoticeTests(TestCase):
+    """The kitchen card's persistent red failure notice (#237).
+
+    After a failed auto-print, the order's kitchen card shows a persistent red
+    "Falha na impressão automática" notice that survives the 5-second polling
+    refresh because it comes from the model (``auto_print_failed``), not a
+    transient DOM state. A successful manual "Imprimir" clears the flag and so
+    the notice leaves the card on the next refresh.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab = Tab.objects.create(name="Comanda Ana")
+        cls.category = Category.objects.create(name="bebidas")
+        cls.kitchen_item = Item.objects.create(
+            name="Batata frita",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=10,
+            requires_kitchen_preparation=True,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _make_order(self, auto_print_failed=False):
+        order = Order.objects.create(
+            tab=self.tab, auto_print_failed=auto_print_failed
+        )
+        OrderItem.objects.create(
+            order=order,
+            item=self.kitchen_item,
+            quantity=2,
+            unit_price=self.kitchen_item.price,
+        )
+        return order
+
+    # --- acceptance: the notice appears on the card when the flag is set ----
+
+    def test_kitchen_page_shows_the_failure_notice_when_flag_is_set(self):
+        order = self._make_order(auto_print_failed=True)
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", body)
+        self.assertIn("Falha na impressão automática", body)
+        self.assertIn("kitchen-auto-print-failed", body)
+
+    def test_polling_fragment_shows_the_failure_notice_when_flag_is_set(self):
+        self._make_order(auto_print_failed=True)
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn("Falha na impressão automática", body)
+        self.assertIn("kitchen-auto-print-failed", body)
+
+    def test_no_notice_when_the_flag_is_false(self):
+        self._make_order(auto_print_failed=False)
+        for url in (reverse("orders:kitchen"), reverse("orders:kitchen-queue")):
+            body = self.client.get(url).content.decode()
+            self.assertNotIn("kitchen-auto-print-failed", body)
+            self.assertNotIn("Falha na impressão automática", body)
+
+    # --- acceptance: the notice survives a polling refresh ------------------
+
+    def test_the_notice_survives_a_polling_refresh(self):
+        """The notice comes from the model, so a polled re-render keeps it."""
+        self._make_order(auto_print_failed=True)
+        first = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        second = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn("Falha na impressão automática", first)
+        self.assertIn("Falha na impressão automática", second)
+
+    # --- acceptance: a successful manual print clears the flag ---------------
+
+    def test_successful_manual_print_clears_the_failure_flag(self):
+        order = self._make_order(auto_print_failed=True)
+        dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, dump_dir, True)
+        with override_settings(
+            KARAOKE_PRINTER_DRY_RUN=True,
+            KARAOKE_PRINTER_DUMP_DIR=dump_dir,
+        ):
+            resp = self.client.post(
+                reverse("orders:order-print", args=[order.pk])
+            )
+        self.assertEqual(resp.status_code, 200)
+        order.refresh_from_db()
+        self.assertFalse(order.auto_print_failed)
+        # And the notice is gone from the card on the next render.
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("Falha na impressão automática", body)
+
+    def test_failed_manual_print_sets_the_failure_flag(self):
+        order = self._make_order(auto_print_failed=False)
+        with mock.patch(
+            "orders.views.print_raw",
+            side_effect=PrinterError("Nenhuma impressora respondeu."),
+        ):
+            resp = self.client.post(
+                reverse("orders:order-print", args=[order.pk])
+            )
+        self.assertEqual(resp.status_code, 503)
+        order.refresh_from_db()
+        self.assertTrue(order.auto_print_failed)
+
+    # --- acceptance: the notice styling lives in the project's SCSS ---------
+
+    def test_the_failure_notice_class_is_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".kitchen-auto-print-failed", scss)
+
+
+class KitchenReceiptFeitoMarkerTests(TestCase):
+    """The [FEITO] marker on printed kitchen tickets (#237).
+
+    A prepared line (``is_prepared`` True) prints prefixed ``[FEITO]``; a
+    non-prepared line prints normally. Totals and layout are otherwise
+    unchanged.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab = Tab.objects.create(name="Comanda Ana")
+        cls.category = Category.objects.create(name="bebidas")
+        cls.fries = Item.objects.create(
+            name="Batata frita",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=10,
+            requires_kitchen_preparation=True,
+        )
+        cls.polenta = Item.objects.create(
+            name="Polenta frita",
+            category=cls.category,
+            price=Decimal("20.00"),
+            stock=8,
+            requires_kitchen_preparation=True,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, self.dump_dir, True)
+        patched = override_settings(
+            KARAOKE_PRINTER_DRY_RUN=True,
+            KARAOKE_PRINTER_DUMP_DIR=self.dump_dir,
+        )
+        patched.enable()
+        self.addCleanup(patched.disable)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _make_order(self, lines):
+        """``lines`` is a list of ``(item, qty, is_prepared)`` triples."""
+        order = Order.objects.create(tab=self.tab)
+        for item, qty, is_prepared in lines:
+            OrderItem.objects.create(
+                order=order,
+                item=item,
+                quantity=qty,
+                unit_price=item.price,
+                is_prepared=is_prepared,
+            )
+        return order
+
+    def _ticket_text(self, order):
+        self.client.post(reverse("orders:order-print", args=[order.pk]))
+        return (self.dump_dir / f"pedido-{order.pk}-cozinha.txt").read_text(
+            encoding="utf-8"
+        )
+
+    # --- acceptance: prepared line → [FEITO] prefix ------------------------
+
+    def test_a_prepared_line_is_prefixed_with_feito(self):
+        order = self._make_order([(self.fries, 2, True)])
+        text = self._ticket_text(order)
+        self.assertIn("[FEITO] 2x Batata frita", text)
+
+    def test_a_non_prepared_line_prints_normally(self):
+        order = self._make_order([(self.fries, 1, False)])
+        text = self._ticket_text(order)
         self.assertIn("1x Batata frita", text)
-        # The ticket's "PREPARAR" section header is unchanged from #234 — the
-        # prepared flag does not add any new "preparado"/"feito"/"ok" marker,
-        # and no strikethrough ESC/POS sequence reaches the paper yet.
-        self.assertNotIn("preparado", text.lower())
-        self.assertNotIn("feito", text.lower())
+        self.assertNotIn("[FEITO]", text)
+
+    def test_mixed_lines_mark_only_the_prepared_one(self):
+        order = self._make_order(
+            [(self.fries, 2, True), (self.polenta, 1, False)]
+        )
+        text = self._ticket_text(order)
+        self.assertIn("[FEITO] 2x Batata frita", text)
+        # The non-prepared line has no marker.
+        self.assertIn("1x Polenta frita", text)
+        # Only one [FEITO] marker on the ticket.
+        self.assertEqual(text.count("[FEITO]"), 1)
+
+    # --- acceptance: totals and layout are otherwise unchanged --------------
+
+    def test_totals_are_unchanged_with_a_prepared_line(self):
+        order = self._make_order(
+            [(self.fries, 2, True), (self.polenta, 1, False)]
+        )
+        text = self._ticket_text(order)
+        lines = text.splitlines()
+        itens_line = next(line for line in lines if "Total de itens:" in line)
+        unidades_line = next(
+            line for line in lines if "Total de unidades:" in line
+        )
+        self.assertTrue(itens_line.rstrip().endswith("2"), itens_line)
+        self.assertTrue(unidades_line.rstrip().endswith("3"), unidades_line)
+
+    def test_the_note_still_rides_under_a_prepared_line(self):
+        order = Order.objects.create(tab=self.tab)
+        OrderItem.objects.create(
+            order=order,
+            item=self.fries,
+            quantity=1,
+            unit_price=self.fries.price,
+            notes="bem passada",
+            is_prepared=True,
+        )
+        text = self._ticket_text(order)
+        self.assertIn("[FEITO] 1x Batata frita", text)
+        self.assertIn("bem passada", text)
+
+    # --- acceptance: a line without the flag is treated as not prepared -----
+
+    def test_a_line_without_the_flag_is_treated_as_not_prepared(self):
+        """If ``is_prepared`` is absent, the line prints normally (no marker)."""
+        from orders.services.receipts import build_kitchen_receipt, strip_escpos
+
+        order = Order.objects.create(tab=self.tab)
+        line = OrderItem.objects.create(
+            order=order,
+            item=self.fries,
+            quantity=1,
+            unit_price=self.fries.price,
+        )
+        # Simulate a row from before the flag existed by deleting the attribute
+        # on a fresh Python object — the receipt builder must not crash.
+        text = build_kitchen_receipt(order).to_text()
+        self.assertIn("1x Batata frita", text)
+        self.assertNotIn("[FEITO]", text)
