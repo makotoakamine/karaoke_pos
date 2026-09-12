@@ -18,8 +18,8 @@ staticfiles/
 receipts_out/
 
 # Compiled CSS from the Sass pipeline (regenerate with `npm run build:css`)
-static/css/main.css
-static/css/main.css.map
+#static/css/main.css
+#static/css/main.css.map
 
 # Node / npm
 node_modules/
