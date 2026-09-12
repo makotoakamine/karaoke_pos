@@ -88,3 +88,49 @@ class Item(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class NoteSuggestion(models.Model):
+    """A one-tap suggested order note for a single :class:`Item`.
+
+    Waiters type the same handful of observations over and over for the same
+    drink ("gelo", "rodela de limão"), so staff curate the list per item in the
+    stock area (#230) and the add-item dialog (#232) renders it as chips next
+    to the free-text notes field.
+
+    Nothing here is hardcoded and nothing here is a foreign key *from* an
+    order: an order line's note (#229) is a free-text snapshot taken when the
+    order is placed, so renaming or deleting a suggestion never rewrites what
+    the kitchen was told. The flip side is that the list is disposable —
+    ``CASCADE`` means deleting an item takes its chips with it, and no past
+    order notices.
+    """
+
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="note_suggestions",
+        verbose_name="item",
+        help_text="Item ao qual a sugestão pertence.",
+    )
+    text = models.CharField(
+        "sugestão",
+        max_length=100,
+        help_text="Texto curto da sugestão (ex.: \"gelo\", \"rodela de limão\").",
+    )
+    created_at = models.DateTimeField("criado em", auto_now_add=True)
+    updated_at = models.DateTimeField("atualizado em", auto_now=True)
+
+    class Meta:
+        ordering = ["text"]
+        verbose_name = "sugestão de observação"
+        verbose_name_plural = "sugestões de observação"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "text"],
+                name="unique_note_suggestion_per_item",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.text

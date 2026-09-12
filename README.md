@@ -35,8 +35,16 @@ A interface está em português brasileiro (pt-br).
   - `inventory/management/commands/seed_demo.py` – comando
     `uv run manage.py seed_demo`, que semeia um catálogo de demonstração em
     pt-BR (ver "Dados de demonstração" abaixo).
+  - `inventory/models.py` – `NoteSuggestion` (#230): sugestões de observação
+    por item (FK `CASCADE`, `related_name="note_suggestions"`, únicas por
+    `(item, texto)`). São editadas no próprio formulário do item, no campo
+    "Sugestões de observação" (uma por linha), e o `#232` vai renderizá-las
+    como atalhos de um toque ao lançar o item no pedido. Não há FK dos pedidos
+    para as sugestões: a observação da linha (#229) é texto livre copiado no
+    momento do pedido, então editar ou excluir uma sugestão nunca mexe em
+    pedidos passados.
   - `inventory/admin.py` – registra `Item` e `Category` no admin do Django
-    como fallback.
+    como fallback, com as sugestões de observação como inline do item.
 - **`tables/`** – app de gestão de mesas (#108).
   - `tables/models.py` – `Table` (nome/número único, lugares, status
     livre/ocupada, `is_active`).
@@ -62,13 +70,14 @@ A interface está em português brasileiro (pt-br).
   - `tabs/urls.py` – `/comandas/` (lista), `/comandas/nova/` (criar) e
     `/comandas/<pk>/editar/` (editar).
   - `tabs/admin.py` – registra `Tab` no admin do Django como fallback.
-- **`orders/`** – app de pedidos (#109, #224, #225).
+- **`orders/`** – app de pedidos (#109, #224, #225, #229, #231).
   - `orders/models.py` – `Order` (FK obrigatória para `tabs.Tab`, FK opcional
     para `tables.Table`, ambas `PROTECT`, status aberta/encerrada,
     `created_at`) e `OrderItem` (FK para o pedido, FK para `inventory.Item`,
-    `quantity`, `unit_price` com snapshot do preço no momento do pedido). O
+    `quantity`, `unit_price` com snapshot do preço no momento do pedido e
+    `notes`, a observação livre da linha — "com gelo e limão"). O
     pedido pertence à comanda; a mesa é só contexto de entrega e pode ficar
-    vazia.
+    vazia; a observação é opcional e o normal é a linha não ter nenhuma.
   - `orders/views.py` – página de abertura de pedido (login required) com
     seleção de comanda (obrigatória, só comandas abertas) + mesa (opcional) +
     formset de itens; o POST roda numa transação única, relê a comanda com
@@ -79,7 +88,12 @@ A interface está em português brasileiro (pt-br).
     `tables.Table.status`. Desde #225 a view também entrega ao template os
     dados do seletor por toque — `open_tabs`, `sellable_items` e
     `item_categories` — para a filtragem acontecer no cliente, sem endpoint
-    JSON nem polling; o contrato do POST não mudou. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
+    JSON nem polling; o contrato do POST não mudou. Desde #231 a página é um
+    assistente de três passos, mas só no cliente: a única coisa que a view
+    acrescentou foi `submission_rejected`, para que uma submissão recusada
+    volte no passo onde está o problema em vez de num passo 1 em branco. O
+    catálogo entregue ao garçom não leva preço nenhum — `unit_price` continua
+    sendo gravado no pedido, só não é renderizado na tela de quem anota. Também a tela de cozinha (login required) em `/pedidos/cozinha/`
     que lista todos os pedidos abertos, do mais antigo ao mais recente, em
     cards grandes do Bootstrap; um endpoint de polling em
     `/pedidos/cozinha/fila/` devolve só o fragmento dos cards e um pequeno
@@ -89,6 +103,8 @@ A interface está em português brasileiro (pt-br).
     "encerrada"; pedidos encerrados nunca aparecem na tela. Nem a comanda nem
     a ocupação das mesas são tocadas aqui. O card da cozinha usa o nome da
     comanda como título e mostra a mesa embaixo só quando o pedido tem uma.
+    Cada linha mostra a observação do garçom (#229) logo abaixo do item, só
+    quando ela existe.
     Desde #228 cada card tem também um botão "Imprimir", que faz POST para
     `/pedidos/<pk>/imprimir/` e manda o cupom da cozinha para a impressora
     térmica — ver ["Impressão térmica"](#impressão-térmica-cupom-de-cozinha-228).
@@ -103,24 +119,53 @@ A interface está em português brasileiro (pt-br).
     (`ReceiptBuilder`, constantes ESC/POS, `normalize_text` e `strip_escpos`),
     também portado do Okinawa POS. Só o cupom de cozinha é montado aqui:
     cabeçalho com o nome da comanda, a mesa (quando houver), o número do
-    pedido e a hora, e uma linha por item com a quantidade — sem preços. Os
-    acentos são normalizados para ASCII porque as impressoras térmicas usam
-    code pages DOS (CP437/CP850).
+    pedido e a hora, e uma linha por item com a quantidade — sem preços —
+    seguida da observação da linha (#229), recuada sob o item e quebrada na
+    largura do papel, quando houver. Os acentos são normalizados para ASCII
+    porque as impressoras térmicas usam code pages DOS (CP437/CP850).
   - `orders/urls.py` – `/pedidos/novo/` (abrir pedido), `/pedidos/cozinha/`
     (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards),
     `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto) e
     `/pedidos/<pk>/imprimir/` (imprimir o cupom de cozinha).
   - `orders/admin.py` – registra `Order` e `OrderItem` no admin do Django
     como fallback.
-- **`templates/orders/order_form.html`** – a página `/pedidos/novo/` (#225).
-  Renderiza os campos reais do formulário (select de comanda, select de mesa e
-  o formset de linhas) e, quando o JavaScript inicializa, esconde os que
-  substitui e passa a dirigi-los: busca por nome nas comandas abertas, chips
-  de categoria + busca por nome no catálogo, um toque adiciona o item (o
-  segundo toque aumenta a quantidade), resumo com controle de quantidade,
-  remoção e total corrente, e barra de envio fixa no rodapé. Com o
-  JavaScript desligado a mesma página entrega os controles de formulário
-  comuns e envia normalmente.
+- **`templates/orders/order_form.html`** – a página `/pedidos/novo/` (#225,
+  #229, #231). Renderiza os campos reais do formulário (select de comanda,
+  select de mesa e o formset de linhas) e, quando o JavaScript inicializa,
+  esconde os que substitui e passa a dirigi-los. Desde #231 a página é um **assistente de três
+  passos** — 1 comanda, 2 itens, 3 confirmação — inteiramente no cliente: são
+  três seções (`data-step="1|2|3"`) do *mesmo* formulário que o script mostra e
+  esconde, com um único POST no fim, exatamente o contrato de #224/#225.
+  - **Passo 1 — Comanda**: busca por nome nas comandas abertas, um toque
+    escolhe, mais o select de mesa ("opcional, apenas onde entregar"). Sem
+    comanda escolhida o "Avançar" fica desabilitado e a razão aparece acima
+    dele.
+  - **Passo 2 — Itens**: a lista do que já está no pedido, cada linha com
+    stepper de quantidade, campo de observação para a cozinha (#229) e
+    "Remover", e a superfície de adicionar item (chips de categoria + busca +
+    grade). Essa superfície é um bloco fechado em si (`#add-item-surface`)
+    porque #232 vai trocá-la por um modal. Com zero linhas não se avança.
+  - **Passo 3 — Confirmação**: recapitulação só de leitura (comanda, mesa ou
+    "sem mesa", cada item com a quantidade e a observação, quando houver) e o
+    **único** "Registrar pedido" do fluxo — o script também recusa qualquer
+    submit vindo de outro passo.
+
+  O indicador de progresso no topo marca o passo atual e os já vencidos; cada
+  número é um botão, então dá para voltar tocando nele. Voltar e avançar não
+  perdem nada: o estado mora nos campos reais (o select de comanda, o select de
+  mesa e os inputs ocultos do formset), não numa cópia do script.
+
+  **Nenhum preço aparece em lugar nenhum do fluxo** (#231): nem nos botões do
+  catálogo, nem por linha, nem como total — o garçom só anota. A contabilidade
+  de preço saiu do script, não foi escondida.
+
+  Com o JavaScript desligado os três passos simplesmente aparecem empilhados,
+  como o formulário longo que a página sempre foi — inclusive o campo de
+  observação de cada linha do formset — e enviam normalmente. Quando o
+  servidor recusa a submissão (estoque insuficiente, comanda fechada), o erro
+  é renderizado *acima* dos passos — visível em qualquer um deles — e o
+  assistente se reconstrói a partir das linhas que voltaram, abrindo no passo 2
+  (ou no 1, se o problema for a comanda).
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para
@@ -190,7 +235,7 @@ formulário de acesso centralizado.
 ## Dados de demonstração
 
 Para mostrar o sistema funcionando sem cadastrar item por item na mão, o app
-`inventory` traz um comando que popula o catálogo com ~17 itens em pt-BR
+`inventory` traz um comando que popula o catálogo com ~19 itens em pt-BR
 plausíveis para um karaokê (refrigerante lata, cerveja long neck, porção de
 batata frita, ...), distribuídos pelas três categorias iniciais:
 
@@ -204,11 +249,16 @@ já mostra os filtros por categoria com produtos para vender. Um dos itens é
 semeado como inativo, de propósito, para deixar visível o caminho de item fora
 do catálogo de vendas.
 
+Alguns itens já vêm com sugestões de observação (#230): a Coca-Cola oferece
+"gelo" e "rodela de limão", o Guaraná oferece "gelo" e "rodela de laranja" — a
+mesma sugestão pode existir em itens diferentes, só não duas vezes no mesmo
+item. Abra o item em `/estoque/` para ver e editar a lista.
+
 Pontos importantes:
 
 - **É seguro rodar de novo.** Tudo passa por `get_or_create` — categorias por
-  nome e itens por `(nome, categoria)` — então uma segunda execução não cria
-  duplicatas e apenas relata que tudo já existia.
+  nome, itens por `(nome, categoria)` e sugestões por `(item, texto)` — então
+  uma segunda execução não cria duplicatas e apenas relata que tudo já existia.
 - **Não sobrescreve nada.** Se você editar o preço ou o estoque de um item
   semeado, a edição permanece intacta nas execuções seguintes. O comando nunca
   apaga nem atualiza linhas existentes (não há `--flush`).
@@ -321,10 +371,10 @@ escura do Bootstrap antes do `@import`. As decisões que definem o visual:
 As classes Bootstrap dos widgets ficam em `orders/forms.py` e
 `inventory/forms.py` (`form-select`, `form-control`, `form-check-input`),
 não nos templates, para que cada linha renderizada carregue o próprio
-estilo. Em `/pedidos/novo/` não existe mais o botão "Adicionar item" — ele
-dependeria justamente do JavaScript que pode estar desligado; o formset já
-vem com cinco linhas em branco (`extra=5`) e, com o JavaScript ligado, o
-seletor por toque escreve as linhas que quiser.
+estilo. Em `/pedidos/novo/` não existe botão "Adicionar linha" no caminho
+sem JavaScript — ele dependeria justamente do JavaScript que pode estar
+desligado; o formset já vem com cinco linhas em branco (`extra=5`) e, com o
+JavaScript ligado, o assistente escreve as linhas que quiser no passo 2.
 
 O tema foi estendido às demais páginas em #204, reaproveitando os utilitários
 de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
@@ -363,15 +413,27 @@ de `main.scss` (`.karaoke-page-header`, `.karaoke-actions`, `.karaoke-micro`,
 - `/estoque/categorias/` (#223) — reaproveita a mesma marcação de
   `/estoque/`: cabeçalho com hairline, card plano com borda, `.karaoke-table`
   e `.karaoke-row-actions`. Nenhuma classe nova de CSS foi necessária.
-- `/pedidos/novo/` (#225) — o seletor por toque. Os alvos de toque
-  (`.karaoke-pick` numa grade `.karaoke-pick-grid` de `auto-fill`) são
-  superfícies planas com borda de 1px, no espírito de `.karaoke-nav-card`; a
-  fila de categorias (`.karaoke-chip-row` + `.karaoke-filter-chip`) rola na
-  horizontal em vez de quebrar em várias linhas; o resumo
-  (`.karaoke-summary*`) usa um stepper quadrado (`.karaoke-qty`) e a barra de
-  envio (`.karaoke-submit-bar`) é `position: sticky` no rodapé do card, para
-  o envio ficar sob o polegar sem rolar de volta ao topo. Em 360px a grade
-  cai para uma coluna e as ações da barra dividem a linha inteira.
+- `/pedidos/novo/` (#225, #231) — o seletor por toque, agora em três passos.
+  Os alvos de toque (`.karaoke-pick` numa grade `.karaoke-pick-grid` de
+  `auto-fill`) são superfícies planas com borda de 1px, no espírito de
+  `.karaoke-nav-card`; a fila de categorias (`.karaoke-chip-row` +
+  `.karaoke-filter-chip`) rola na horizontal em vez de quebrar em várias
+  linhas; a lista de linhas (`.karaoke-summary*`) usa um stepper quadrado
+  (`.karaoke-qty`) e o campo de observação (`.karaoke-note-input`, #229) cai
+  numa linha inteira sob ele. O indicador de passos (`.karaoke-steps` +
+  `.karaoke-step-chip`, com `.karaoke-step-num` e `.karaoke-step-label`) é uma
+  trilha de três números sublinhados pelo mesmo hairline do resto do app, com
+  o passo atual em roxo e os vencidos em roxo esmaecido. A barra fixa no
+  rodapé do card (`.karaoke-submit-bar`, `position: sticky`) deixou de mostrar
+  total e passou a ser a navegação: onde o garçom está
+  (`.karaoke-wizard-status`), por que ainda não dá para avançar
+  (`.karaoke-wizard-hint`) e os botões Voltar/Avançar/Registrar pedido, sempre
+  sob o polegar. A recapitulação do passo 3 (`.karaoke-recap*`) é só linhas de
+  definição, quantidades e a observação de cada item (`.karaoke-recap-note`),
+  sem controle nenhum. Em 360px a grade cai para uma
+  coluna, os rótulos dos passos somem (ficam só os números, já que a barra
+  soletra o nome do passo logo abaixo) e as ações da barra dividem a linha
+  inteira.
 
 ### Customizando o tema do Bootstrap
 

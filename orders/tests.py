@@ -12,7 +12,7 @@ from django.test import TestCase, override_settings
 from django.urls import resolve, reverse
 from django.utils import timezone
 
-from inventory.models import Category, Item
+from inventory.models import Category, Item, NoteSuggestion
 from orders import urls as orders_urls
 from orders.forms import OrderForm
 from orders.models import Order, OrderItem
@@ -514,14 +514,21 @@ class OrderPickerDataTests(TestCase):
         self.assertIn(f'data-item-id="{self.fries.pk}"', body)
 
     def test_item_entries_carry_the_data_the_picker_needs(self):
+        """Name, stock and category — and, since #231, no price at all.
+
+        The waiter's screen shows no money, so the price is not merely hidden
+        with CSS: it is never rendered, not even as a data attribute the
+        script could read back.
+        """
         body = self._body()
         entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
             "</button>", 1
         )[0]
         self.assertIn('data-item-name="Cerveja"', entry)
-        self.assertIn('data-item-price="8.50"', entry)
         self.assertIn('data-item-stock="10"', entry)
-        self.assertIn("R$ 8.50", entry)
+        self.assertNotIn("data-item-price", entry)
+        self.assertNotIn("8.50", entry)
+        self.assertNotIn("R$", entry)
 
     def test_item_context_is_the_sellable_catalogue_alphabetically(self):
         resp = self.client.get(reverse("orders:order-create"))
@@ -566,13 +573,15 @@ class OrderPickerDataTests(TestCase):
             list(resp.context["item_categories"]), [self.drinks, self.food]
         )
 
-    # --- acceptance: summary, total and a reachable submit -------------------
+    # --- acceptance: the line list and a reachable submit --------------------
 
-    def test_the_page_renders_a_summary_with_a_running_total(self):
+    def test_the_page_renders_the_line_list_the_picker_fills_in(self):
         body = self._body()
         self.assertIn('id="order-summary"', body)
-        self.assertIn('id="order-total"', body)
         self.assertIn('id="order-line-inputs"', body)
+
+    def test_the_page_carries_no_running_total_since_prices_left(self):
+        self.assertNotIn('id="order-total"', self._body())
 
     def test_the_submit_rides_a_sticky_bar_so_it_stays_reachable(self):
         body = self._body()
@@ -682,6 +691,525 @@ class OrderPickerDataTests(TestCase):
             ".karaoke-qty",
             ".karaoke-submit-bar",
             ".karaoke-empty",
+        ):
+            self.assertIn(selector, scss)
+
+
+class OrderWizardTests(TestCase):
+    """The three-step wizard on /pedidos/novo/ (#231).
+
+    Stepping itself is JavaScript — blocking Avançar until a comanda is picked,
+    the recap, the back button — and is exercised in a browser, not here. What
+    is server-owned is the markup that JavaScript drives: three labelled step
+    sections with a progress indicator, the submit parked in the step-3 slot,
+    no price anywhere on the page, and a rejected POST coming back flagged so
+    the wizard knows not to reset itself. Those are what these tests pin.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("garcom", password="secret123")
+        cls.category = Category.objects.create(name="Bebidas")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.tab = Tab.objects.create(name="Ana e amigos", table=cls.table)
+        cls.beer = Item.objects.create(
+            name="Cerveja", category=cls.category, price=Decimal("8.50"), stock=10
+        )
+        cls.caipirinha = Item.objects.create(
+            name="Caipirinha",
+            category=cls.category,
+            price=Decimal("19.90"),
+            stock=4,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def _body(self):
+        return self.client.get(reverse("orders:order-create")).content.decode()
+
+    def _payload(self, lines, **overrides):
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item_pk, quantity) in enumerate(lines):
+            data[f"lines-{index}-item"] = item_pk
+            data[f"lines-{index}-quantity"] = quantity
+        data.update(overrides)
+        return data
+
+    # --- acceptance: three labelled steps with a progress indicator ---------
+
+    def test_the_page_renders_three_step_sections(self):
+        body = self._body()
+        for step in (1, 2, 3):
+            self.assertIn(f'data-step="{step}"', body)
+        self.assertNotIn('data-step="4"', body)
+
+    def test_the_progress_indicator_labels_every_step(self):
+        indicator = self._body().split('id="order-steps"', 1)[1].split("</ol>", 1)[0]
+        for step, label in ((1, "Comanda"), (2, "Itens"), (3, "Confirmação")):
+            self.assertIn(f'data-step-chip="{step}"', indicator)
+            self.assertIn(label, indicator)
+
+    def test_step_one_holds_the_comanda_picker_and_the_optional_table(self):
+        step = self._body().split('data-step="1"', 1)[1].split('data-step="2"', 1)[0]
+        self.assertIn('id="tab-search"', step)
+        self.assertIn('id="tab-picker"', step)
+        self.assertIn(f'data-tab-id="{self.tab.pk}"', step)
+        self.assertIn('<select name="table"', step)
+        self.assertIn("Opcional", step)
+
+    def test_step_two_holds_the_line_list_and_the_add_item_button(self):
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        self.assertIn('id="order-summary"', step)
+        self.assertIn('id="order-line-inputs"', step)
+        # Since #232 the add-item surface is a full-screen modal reached from
+        # an "Adicionar item" button — the order list no longer offers inline
+        # item picking. The modal markup lives outside the step (it is a
+        # Bootstrap modal), so the step itself only carries the button.
+        self.assertIn("karaoke-add-item-btn", step)
+        self.assertIn('data-bs-target="#add-item-modal"', step)
+        # The inline category chips and item grid are gone from the step: they
+        # now live inside the modal.
+        self.assertNotIn('id="category-chips"', step)
+        self.assertNotIn('id="item-search"', step)
+        self.assertNotIn('id="item-picker"', step)
+
+    def test_the_add_item_modal_is_rendered_with_chips_search_and_picker(self):
+        """The full-screen modal (#232) carries the picker data the step used to."""
+        body = self._body()
+        modal = body.split('id="add-item-modal"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('modal-fullscreen', modal)
+        self.assertIn('id="category-chips"', modal)
+        self.assertIn('data-category="all"', modal)
+        self.assertIn('id="item-search"', modal)
+        self.assertIn('id="item-picker"', modal)
+        # "Todos" is the active chip by default.
+        chips = modal.split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn("karaoke-filter-chip is-on", chips)
+
+    def test_the_quantity_notes_dialog_is_rendered_after_the_add_item_modal(self):
+        """A second modal asks for quantity and notes when an item is tapped."""
+        body = self._body()
+        modal = body.split('id="line-dialog"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('id="line-dialog-title"', modal)
+        self.assertIn('id="line-dialog-qty"', modal)
+        self.assertIn('id="line-dialog-notes"', modal)
+        self.assertIn('id="line-dialog-suggestions"', modal)
+        self.assertIn('id="line-dialog-confirm"', modal)
+        # Quantity defaults to 1, minimum 1.
+        qty_field = modal.split('id="line-dialog-qty"', 1)[1].split(">", 1)[0]
+        self.assertIn('min="1"', qty_field)
+        self.assertIn('value="1"', qty_field)
+
+    def test_step_three_holds_the_read_only_recap(self):
+        step = self._body().split('data-step="3"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('id="order-recap"', step)
+        self.assertIn('id="order-recap-lines"', step)
+        self.assertIn("Confirmação", step)
+
+    # --- acceptance: the submit belongs to step 3 ---------------------------
+
+    def test_the_wizard_submit_starts_hidden_next_to_the_step_controls(self):
+        """Only step 3 may send the order, so its button comes up hidden.
+
+        The script unhides it on the confirmation step and nowhere else; what
+        the server can guarantee is that the enhanced path ships exactly one
+        submit and that it starts out of reach.
+        """
+        bar = self._body().split("karaoke-submit-bar", 1)[1].split("</form>", 1)[0]
+        self.assertIn("data-wizard-back", bar)
+        self.assertIn("data-wizard-next", bar)
+        self.assertIn("data-wizard-submit hidden", bar)
+
+    def test_the_plain_submit_is_the_no_javascript_path(self):
+        """With scripting off the steps all render and the plain submit works."""
+        body = self._body()
+        # The step sections are not hidden in the markup — the script hides
+        # the two it is not showing.
+        self.assertNotIn('data-step="1" hidden', body)
+        self.assertNotIn('class="karaoke-step" hidden', body)
+        actions = body.split('class="karaoke-actions" data-order-plain', 1)[1]
+        self.assertIn('type="submit"', actions.split("</div>", 1)[0])
+
+    # --- acceptance: no price anywhere in the waiter's flow ------------------
+
+    def test_no_price_is_rendered_anywhere_on_the_order_page(self):
+        body = self._body()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("8.50", body)
+        self.assertNotIn("19.90", body)
+        self.assertNotIn("data-item-price", body)
+        self.assertNotIn('id="order-total"', body)
+
+    def test_no_price_survives_a_rejected_re_render_either(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.caipirinha.pk, 99)]),
+        )
+        self.assertEqual(resp.status_code, 400)
+        body = resp.content.decode()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("19.90", body)
+
+    def test_the_script_no_longer_carries_price_bookkeeping(self):
+        """Dropped, not hidden: no money helper is left in the page script."""
+        body = self._body()
+        self.assertNotIn("function money", body)
+        self.assertNotIn("toFixed", body)
+
+    # --- acceptance: a rejection seeds the wizard instead of resetting it ----
+
+    def test_a_fresh_page_is_not_flagged_as_a_rejection(self):
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertFalse(resp.context["submission_rejected"])
+        self.assertNotIn("data-order-rejected", resp.content.decode())
+
+    def test_a_rejected_submission_is_flagged_with_the_lines_intact(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.beer.pk, 2), (self.caipirinha.pk, 99)]),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(resp.context["submission_rejected"])
+        body = resp.content.decode()
+        self.assertIn('data-order-rejected="1"', body)
+        # The error the waiter has to read, above the steps so it is visible
+        # whichever step the wizard lands on.
+        self.assertIn("Estoque insuficiente", body)
+        # and the chosen comanda plus both lines are still in the plain rows
+        # the wizard seeds itself from.
+        self.assertIn(f'<option value="{self.tab.pk}" selected>', body)
+        self.assertIn(f'<option value="{self.beer.pk}" selected>', body)
+        self.assertIn(f'<option value="{self.caipirinha.pk}" selected>', body)
+        self.assertIn('value="99"', body)
+        self.assertFalse(Order.objects.exists())
+
+    def test_a_rejection_with_no_items_is_flagged_too(self):
+        resp = self.client.post(reverse("orders:order-create"), self._payload([]))
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(resp.context["submission_rejected"])
+        self.assertContains(resp, "Adicione ao menos um item", status_code=400)
+
+    # --- acceptance: submitting still creates the order exactly as before ----
+
+    def test_a_wizard_submission_creates_the_order_and_moves_stock(self):
+        """The wizard posts what the plain form posts: same names, same shape."""
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.beer.pk, 3), (self.caipirinha.pk, 1)]),
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        order = Order.objects.get()
+        self.assertEqual(order.tab_id, self.tab.pk)
+        self.assertEqual(order.table_id, self.table.pk)
+        self.assertEqual(
+            sorted(order.items.values_list("item__name", "quantity")),
+            [("Caipirinha", 1), ("Cerveja", 3)],
+        )
+        self.beer.refresh_from_db()
+        self.caipirinha.refresh_from_db()
+        self.assertEqual(self.beer.stock, 7)
+        self.assertEqual(self.caipirinha.stock, 3)
+
+    def test_the_submitted_order_reaches_the_kitchen_and_the_tab_detail(self):
+        self.client.post(
+            reverse("orders:order-create"), self._payload([(self.beer.pk, 2)])
+        )
+        order = Order.objects.get()
+
+        kitchen = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", kitchen)
+        self.assertIn("Cerveja", kitchen)
+
+        detail = self.client.get(
+            reverse("tabs:tab-detail", args=[self.tab.pk])
+        ).content.decode()
+        self.assertIn(f"#{order.pk}", detail)
+        self.assertIn("Cerveja", detail)
+
+    # --- acceptance: the wizard styling lives in the project's SCSS ----------
+
+    def test_the_wizard_classes_are_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        for selector in (
+            ".karaoke-steps",
+            ".karaoke-step-chip",
+            ".karaoke-step-num",
+            ".karaoke-step-label",
+            ".karaoke-wizard-status",
+            ".karaoke-wizard-hint",
+            ".karaoke-recap",
+            ".karaoke-recap-row",
+            ".karaoke-recap-qty",
+        ):
+            self.assertIn(selector, scss)
+
+
+class AddItemModalTests(TestCase):
+    """The add-item modal and quantity/notes dialog on /pedidos/novo/ (#232).
+
+    The modal is a layer over the existing single-POST contract: the catalogue
+    is rendered inside a full-screen Bootstrap modal, tapping an item opens a
+    second dialog for quantity and notes, and confirming appends a line to the
+    hidden formset inputs. What the server owns is the markup and the data the
+    script drives — the category strip, the search field, the suggestion chips
+    riding on each item, and the absence of prices anywhere in the flow. The
+    POST contract and the no-JS fallback are covered by the suites above; this
+    class pins what #232 adds.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("garcom", password="secret123")
+        cls.drinks = Category.objects.create(name="Bebidas")
+        cls.food = Category.objects.create(name="Porções")
+        cls.empty_category = Category.objects.create(name="Sobremesas")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.tab = Tab.objects.create(name="Ana e amigos", table=cls.table)
+
+        cls.beer = Item.objects.create(
+            name="Cerveja", category=cls.drinks, price=Decimal("8.50"), stock=10
+        )
+        # Two curated suggestions — the chip row the dialog renders.
+        NoteSuggestion.objects.create(item=cls.beer, text="gelo")
+        NoteSuggestion.objects.create(item=cls.beer, text="rodela de limão")
+
+        cls.fries = Item.objects.create(
+            name="Batata frita", category=cls.food, price=Decimal("25.00"), stock=6
+        )
+        # No suggestions — the dialog shows no chip row for this item.
+
+        cls.dessert = Item.objects.create(
+            name="Pudim guardado",
+            category=cls.empty_category,
+            price=Decimal("12.00"),
+            stock=0,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def _body(self):
+        return self.client.get(reverse("orders:order-create")).content.decode()
+
+    def _modal(self):
+        return self._body().split('id="add-item-modal"', 1)[1].split("</form>", 1)[0]
+
+    def _dialog(self):
+        return self._body().split('id="line-dialog"', 1)[1].split("</form>", 1)[0]
+
+    # --- acceptance: the "Adicionar item" button replaces inline picking -----
+
+    def test_step_two_offers_an_adicionar_item_button(self):
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        self.assertIn("Adicionar item", step)
+        self.assertIn('data-bs-toggle="modal"', step)
+        self.assertIn('data-bs-target="#add-item-modal"', step)
+
+    def test_the_order_list_no_longer_offers_inline_item_picking(self):
+        """The inline category chips and item grid are gone from step 2."""
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        # The picker grid and the inline filter chips moved into the modal.
+        self.assertNotIn('id="item-picker"', step)
+        self.assertNotIn('id="category-chips"', step)
+        self.assertNotIn('id="item-search"', step)
+
+    # --- acceptance: full-screen modal with a pinned category strip ----------
+
+    def test_the_add_item_modal_is_full_screen(self):
+        modal = self._modal()
+        self.assertIn("modal-fullscreen", modal)
+        self.assertIn('role="dialog"', modal)
+
+    def test_the_category_strip_is_rendered_inside_the_modal(self):
+        modal = self._modal()
+        self.assertIn('id="category-chips"', modal)
+        for category in (self.drinks, self.food):
+            self.assertIn(f'data-category="{category.pk}"', modal)
+            self.assertIn(category.name, modal)
+
+    def test_the_category_strip_offers_todos_active_by_default(self):
+        modal = self._modal()
+        chips = modal.split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('data-category="all"', chips)
+        self.assertIn("Todos", chips)
+        # Only "Todos" starts active.
+        self.assertIn("karaoke-filter-chip is-on", chips)
+
+    def test_a_category_with_nothing_sellable_gets_no_chip_in_the_modal(self):
+        modal = self._modal()
+        self.assertNotIn(f'data-category="{self.empty_category.pk}"', modal)
+
+    def test_the_search_field_is_rendered_below_the_category_strip(self):
+        modal = self._modal()
+        self.assertIn('id="item-search"', modal)
+
+    def test_the_item_grid_inside_the_modal_lists_sellable_items(self):
+        modal = self._modal()
+        for item in (self.beer, self.fries):
+            self.assertIn(f'data-item-id="{item.pk}"', modal)
+        for item in (self.dessert,):
+            self.assertNotIn(f'data-item-id="{item.pk}"', modal)
+
+    def test_no_match_in_the_modal_shows_a_friendly_empty_message(self):
+        modal = self._modal()
+        self.assertIn("data-item-empty", modal)
+        self.assertIn("Nenhum item encontrado", modal)
+
+    # --- acceptance: no price anywhere in the modal or the dialog ------------
+
+    def test_no_price_is_rendered_in_the_add_item_modal(self):
+        modal = self._modal()
+        self.assertNotIn("R$", modal)
+        self.assertNotIn("8.50", modal)
+        self.assertNotIn("25.00", modal)
+        self.assertNotIn("data-item-price", modal)
+
+    def test_no_price_is_rendered_in_the_quantity_notes_dialog(self):
+        dialog = self._dialog()
+        self.assertNotIn("R$", dialog)
+        self.assertNotIn("8.50", dialog)
+        self.assertNotIn("25.00", dialog)
+
+    # --- acceptance: suggestion chips ride along with the item data ----------
+
+    def test_each_item_carries_its_suggestions_as_data(self):
+        """The dialog clones chips from a `||`-joined data attribute (#230)."""
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn("data-item-suggestions", entry)
+        self.assertIn("gelo", entry)
+        self.assertIn("rodela de limão", entry)
+
+    def test_an_item_without_suggestions_carries_an_empty_attribute(self):
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.fries.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn("data-item-suggestions", entry)
+        # The attribute is present but empty — the script renders no chip row.
+        suggestions_attr = entry.split('data-item-suggestions="', 1)[1].split(
+            '"', 1
+        )[0]
+        self.assertEqual(suggestions_attr, "")
+
+    def test_the_dialog_renders_a_suggestion_chips_row(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-suggestions"', dialog)
+        self.assertIn("karaoke-suggestion-chips", dialog)
+
+    def test_the_dialog_renders_a_no_suggestions_empty_state(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-no-suggestions"', dialog)
+
+    def test_suggestion_text_is_escaped_in_the_data_attribute(self):
+        """Markup in a suggestion must not reach the DOM as live HTML.
+
+        ``escapejs`` is what the data attribute uses (the script reads it via
+        ``dataset``), so the angle brackets come through as ``\\u003C`` rather
+        than HTML entities — either way, the raw ``<b>`` never reaches the DOM.
+        """
+        item = Item.objects.create(
+            name="Item com sugestão maliciosa",
+            category=self.drinks,
+            price=Decimal("1.00"),
+            stock=1,
+        )
+        NoteSuggestion.objects.create(item=item, text="<b>gelo</b>")
+        body = self._body()
+        entry = body.split(f'data-item-id="{item.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertNotIn("<b>gelo</b>", entry)
+        self.assertIn("gelo", entry)
+
+    # --- acceptance: the quantity/notes dialog --------------------------------
+
+    def test_the_dialog_has_a_quantity_input_defaulting_to_one(self):
+        dialog = self._dialog()
+        qty_field = dialog.split('id="line-dialog-qty"', 1)[1].split(">", 1)[0]
+        self.assertIn('min="1"', qty_field)
+        self.assertIn('value="1"', qty_field)
+
+    def test_the_dialog_has_a_notes_input(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-notes"', dialog)
+        self.assertIn("maxlength=\"200\"", dialog)
+
+    def test_the_dialog_has_a_confirm_button(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-confirm"', dialog)
+        self.assertIn("Confirmar", dialog)
+
+    def test_the_dialog_carries_the_max_stock_hint_for_the_script(self):
+        """The script caps the quantity stepper at the item's current stock."""
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn('data-item-stock="10"', entry)
+
+    # --- acceptance: the single-POST contract and duplicate lines ------------
+
+    def test_the_dialog_writes_the_same_formset_field_names(self):
+        """The hidden inputs keep the ``lines-N-notes`` contract (#229)."""
+        body = self._body()
+        self.assertIn('"lines-" + index + "-notes"', body)
+        self.assertIn('"lines-" + index + "-item"', body)
+        self.assertIn('"lines-" + index + "-quantity"', body)
+
+    def test_duplicate_item_lines_can_be_posted_as_separate_lines(self):
+        """Two lines of the same item with different notes both land on the order."""
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-item": self.beer.pk,
+            "lines-0-quantity": "1",
+            "lines-0-notes": "com gelo",
+            "lines-1-item": self.beer.pk,
+            "lines-1-quantity": "2",
+            "lines-1-notes": "sem gelo",
+        }
+        resp = self.client.post(reverse("orders:order-create"), data)
+        self.assertEqual(resp.status_code, 302)
+
+        order = Order.objects.get()
+        lines = list(order.items.order_by("pk"))
+        self.assertEqual(len(lines), 2)
+        self.assertEqual([l.quantity for l in lines], [1, 2])
+        self.assertEqual([l.notes for l in lines], ["com gelo", "sem gelo"])
+        self.beer.refresh_from_db()
+        self.assertEqual(self.beer.stock, 7)
+
+    # --- acceptance: the wizard styling lives in the project's SCSS ----------
+
+    def test_the_modal_classes_are_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        for selector in (
+            ".karaoke-add-item-btn",
+            ".karaoke-modal-sticky",
+            ".karaoke-modal-chips",
+            ".karaoke-modal-scroll",
+            ".karaoke-suggestion-chip",
+            ".karaoke-summary-note",
         ):
             self.assertIn(selector, scss)
 
@@ -1227,3 +1755,291 @@ class KitchenReceiptBuilderTests(TestCase):
         builder = ReceiptBuilder(width=20, margin=2)
         builder.lr("Itens:", "3")
         self.assertIn("Itens:           3", builder.to_text())
+
+
+@override_settings(KARAOKE_PRINTER_DRY_RUN=True)
+class OrderLineNotesTests(TestCase):
+    """Acceptance tests for the per-line note, waiter to kitchen (#229).
+
+    The note is one free-text field that has to survive the whole trip: typed
+    on the order page, posted through the ``lines-`` formset, stored on the
+    :class:`OrderItem`, shown on the kitchen card and printed on the ticket.
+    Each leg of that trip gets its own test, plus the case that must stay
+    boring — a line with no note at all.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab = Tab.objects.create(name="Comanda Ana")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.category = Category.objects.create(name="bebidas")
+        cls.caipirinha = Item.objects.create(
+            name="Caipirinha", category=cls.category, price=Decimal("22.00"), stock=20
+        )
+        cls.fries = Item.objects.create(
+            name="Porção de batata frita",
+            category=cls.category,
+            price=Decimal("34.90"),
+            stock=10,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, self.dump_dir, True)
+        patched = override_settings(KARAOKE_PRINTER_DUMP_DIR=self.dump_dir)
+        patched.enable()
+        self.addCleanup(patched.disable)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _post(self, lines):
+        """POST the order page with ``lines`` as ``(item, quantity, notes)``."""
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item, quantity, notes) in enumerate(lines):
+            data[f"lines-{index}-item"] = item.pk
+            data[f"lines-{index}-quantity"] = str(quantity)
+            if notes is not None:
+                data[f"lines-{index}-notes"] = notes
+        return self.client.post(reverse("orders:order-create"), data)
+
+    def _make_order(self, lines, table=None):
+        """Build an order directly from ``(item, quantity, notes)`` triples."""
+        order = Order.objects.create(tab=self.tab, table=table)
+        for item, quantity, notes in lines:
+            OrderItem.objects.create(
+                order=order,
+                item=item,
+                quantity=quantity,
+                unit_price=item.price,
+                notes=notes,
+            )
+        return order
+
+    def _ticket_text(self, order):
+        self.client.post(reverse("orders:order-print", args=[order.pk]))
+        return (self.dump_dir / f"pedido-{order.pk}-cozinha.txt").read_text(
+            encoding="utf-8"
+        )
+
+    # --- acceptance: the model's new field ---------------------------------
+
+    def test_a_line_without_a_note_defaults_to_the_empty_string(self):
+        """The normal case: no note, no ``None`` to guard against downstream."""
+        order = Order.objects.create(tab=self.tab)
+        line = OrderItem.objects.create(
+            order=order, item=self.caipirinha, quantity=1, unit_price=Decimal("22.00")
+        )
+        line.refresh_from_db()
+        self.assertEqual(line.notes, "")
+
+    # --- acceptance: the note round-trips from POST to the OrderItem --------
+
+    def test_a_note_posted_on_a_line_is_stored_on_the_order_item(self):
+        resp = self._post([(self.caipirinha, 2, "com gelo e limão")])
+        self.assertEqual(resp.status_code, 302)
+
+        line = OrderItem.objects.get()
+        self.assertEqual(line.item_id, self.caipirinha.pk)
+        self.assertEqual(line.quantity, 2)
+        self.assertEqual(line.notes, "com gelo e limão")
+
+    def test_each_line_keeps_its_own_note(self):
+        self._post(
+            [
+                (self.caipirinha, 1, "sem açúcar"),
+                (self.fries, 1, "bem passada"),
+            ]
+        )
+        notes = {
+            line.item.name: line.notes for line in OrderItem.objects.select_related("item")
+        }
+        self.assertEqual(notes["Caipirinha"], "sem açúcar")
+        self.assertEqual(notes["Porção de batata frita"], "bem passada")
+
+    def test_a_note_is_stripped_of_surrounding_whitespace(self):
+        self._post([(self.caipirinha, 1, "  com gelo  ")])
+        self.assertEqual(OrderItem.objects.get().notes, "com gelo")
+
+    # --- acceptance: a blank note stays valid and changes nothing -----------
+
+    def test_a_line_with_a_blank_note_still_submits(self):
+        resp = self._post([(self.caipirinha, 1, "")])
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(OrderItem.objects.get().notes, "")
+
+    def test_a_line_that_posts_no_notes_field_at_all_still_submits(self):
+        """Exactly the pre-#229 POST body: it has to keep working untouched."""
+        resp = self._post([(self.caipirinha, 3, None)])
+        self.assertEqual(resp.status_code, 302)
+
+        line = OrderItem.objects.get()
+        self.assertEqual(line.quantity, 3)
+        self.assertEqual(line.notes, "")
+        self.caipirinha.refresh_from_db()
+        self.assertEqual(self.caipirinha.stock, 17)
+
+    def test_a_note_on_one_line_leaves_the_other_line_blank(self):
+        self._post([(self.caipirinha, 1, "com gelo"), (self.fries, 1, "")])
+        notes = {
+            line.item.name: line.notes for line in OrderItem.objects.select_related("item")
+        }
+        self.assertEqual(notes["Caipirinha"], "com gelo")
+        self.assertEqual(notes["Porção de batata frita"], "")
+
+    def test_a_note_over_the_field_length_is_rejected_without_writing(self):
+        resp = self._post([(self.caipirinha, 1, "x" * 201)])
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+        self.assertFalse(OrderItem.objects.exists())
+
+    # --- acceptance: the waiter-side inputs ---------------------------------
+
+    def test_the_plain_formset_rows_offer_a_notes_input(self):
+        """The no-JS path: every rendered row has its own ``lines-N-notes``."""
+        body = self.client.get(reverse("orders:order-create")).content.decode()
+        self.assertIn('name="lines-0-notes"', body)
+        self.assertIn('name="lines-4-notes"', body)
+
+    def test_the_picker_posts_its_notes_through_the_same_formset_prefix(self):
+        """The touch picker writes the very same field names, per line.
+
+        Since #232 the note is entered in the quantity/notes dialog and the
+        summary shows it read-only — the inline ``karaoke-note-input`` on the
+        summary row is gone, replaced by ``karaoke-summary-note`` and the
+        dialog's ``line-dialog-notes``. The formset contract is unchanged.
+        """
+        body = self.client.get(reverse("orders:order-create")).content.decode()
+        self.assertIn('"lines-" + index + "-notes"', body)
+        # The dialog owns the notes entry now; the summary only shows the value.
+        self.assertIn('id="line-dialog-notes"', body)
+        self.assertIn("karaoke-summary-note", body)
+        self.assertNotIn("karaoke-note-input", body)
+        # The add-item flow is now a Bootstrap modal (#232).
+        self.assertIn('data-bs-toggle="modal"', body)
+        self.assertIn('id="add-item-modal"', body)
+
+    def test_the_note_input_style_is_defined_in_the_projects_scss(self):
+        """The compiled CSS is gitignored, so the source is what we can pin.
+
+        Since #232 the inline ``.karaoke-note-input`` on the summary row is
+        gone; the dialog's notes field is a plain ``.form-control`` and the
+        summary shows the note read-only as ``.karaoke-summary-note``. The
+        kitchen card's ``.kitchen-line-note`` is unchanged.
+        """
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".karaoke-summary-note", scss)
+        self.assertIn(".kitchen-line-note", scss)
+
+    # --- acceptance: the kitchen screen -------------------------------------
+
+    def test_kitchen_card_shows_the_note_under_its_item(self):
+        self._make_order([(self.caipirinha, 2, "com gelo e limão")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+
+        self.assertIn("Caipirinha", body)
+        self.assertIn(
+            '<p class="kitchen-line-note">com gelo e limão</p>', body
+        )
+
+    def test_polling_fragment_also_shows_the_note(self):
+        self._make_order([(self.caipirinha, 1, "sem açúcar")])
+        body = self.client.get(reverse("orders:kitchen-queue")).content.decode()
+        self.assertIn('<p class="kitchen-line-note">sem açúcar</p>', body)
+
+    def test_a_line_without_a_note_renders_no_note_element(self):
+        self._make_order([(self.caipirinha, 1, "")])
+        for url in (reverse("orders:kitchen"), reverse("orders:kitchen-queue")):
+            body = self.client.get(url).content.decode()
+            self.assertNotIn("kitchen-line-note", body)
+
+    def test_only_the_line_with_a_note_gets_one_on_the_card(self):
+        self._make_order([(self.caipirinha, 1, "com gelo"), (self.fries, 2, "")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertEqual(body.count("kitchen-line-note"), 1)
+
+    def test_a_note_with_markup_is_escaped_on_the_card(self):
+        self._make_order([(self.caipirinha, 1, "sem <b>gelo</b>")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("<b>gelo</b>", body)
+        self.assertIn("&lt;b&gt;gelo&lt;/b&gt;", body)
+
+    def test_the_kitchen_card_still_shows_no_prices(self):
+        self._make_order([(self.caipirinha, 1, "com gelo")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("22.00", body)
+
+    # --- acceptance: the printed ticket -------------------------------------
+
+    def test_the_ticket_prints_the_note_indented_under_its_item(self):
+        order = self._make_order([(self.caipirinha, 2, "com gelo e limão")])
+        text = self._ticket_text(order)
+
+        lines = text.splitlines()
+        item_at = next(i for i, line in enumerate(lines) if "2x Caipirinha" in line)
+        note_at = next(i for i, line in enumerate(lines) if "com gelo e limao" in line)
+
+        # Directly under the item it belongs to...
+        self.assertEqual(note_at, item_at + 1)
+        # ...and indented further in than the item line itself.
+        item_indent = len(lines[item_at]) - len(lines[item_at].lstrip())
+        note_indent = len(lines[note_at]) - len(lines[note_at].lstrip())
+        self.assertGreater(note_indent, item_indent)
+
+    def test_the_ticket_normalizes_the_notes_accents(self):
+        order = self._make_order([(self.fries, 1, "sem açúcar, bem passada")])
+        text = self._ticket_text(order)
+        self.assertIn("sem acucar, bem passada", text)
+        self.assertNotIn("açúcar", text)
+
+    def test_a_long_note_wraps_to_the_paper_width(self):
+        note = (
+            "sem cebola sem pimenta sem tomate e por favor mandar o molho "
+            "separado em um potinho a parte"
+        )
+        order = self._make_order([(self.fries, 1, note)])
+        text = self._ticket_text(order)
+
+        wrapped = [line for line in text.splitlines() if "sem cebola" in line]
+        self.assertEqual(len(wrapped), 1)
+        # Wrapped, not truncated: the tail is on the paper too, and nothing
+        # overflows the configured width.
+        self.assertIn("potinho", text)
+        for line in text.splitlines():
+            self.assertLessEqual(len(line), settings.KARAOKE_RECEIPT_WIDTH)
+
+    def test_the_ticket_omits_the_note_line_when_there_is_none(self):
+        order = self._make_order([(self.caipirinha, 1, "")])
+        text = self._ticket_text(order)
+        self.assertIn("1x Caipirinha", text)
+        # The only dashes left are the rules, never an empty "- " note.
+        self.assertNotIn("- \n", text)
+
+    def test_the_ticket_with_notes_still_carries_no_prices(self):
+        order = self._make_order(
+            [(self.caipirinha, 2, "com gelo"), (self.fries, 1, "bem passada")]
+        )
+        text = self._ticket_text(order)
+        self.assertNotIn("R$", text)
+        self.assertNotIn("22.00", text)
+        self.assertNotIn("34.90", text)
+
+    def test_a_note_typed_by_the_waiter_reaches_the_printed_ticket(self):
+        """The whole trip in one test: POST, kitchen card, paper."""
+        self._post([(self.caipirinha, 1, "com gelo e limão")])
+        order = Order.objects.get()
+
+        card = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("com gelo e limão", card)
+        self.assertIn("com gelo e limao", self._ticket_text(order))

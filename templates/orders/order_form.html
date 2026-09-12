@@ -3,17 +3,22 @@
 
 {% block title %}{{ title }} &middot; Karaokê POS{% endblock %}
 
-{% comment %}Order-taking page (#225).
+{% comment %}Order-taking page (#225, #231).
 
 The page is a waiter's phone screen first: tapping and searching, not two long
-select lists. It is built as a *layer* over the real form fields — the tab
-select, the table select and the line formset are all rendered for real, and
-the JavaScript at the bottom hides the ones it replaces and drives them from
-the picker. With scripting off, everything below still renders as plain form
-controls and submits exactly as before.
+select lists. Since #231 it is also a *wizard* — 1 comanda, 2 itens,
+3 confirmação — but only on the client: there is still one form, one formset
+and one POST, exactly the contract #224/#225 established. The steps are
+sections of that single form that the script shows and hides; nothing here
+round-trips to the server to change step.
 
-Nothing here talks to the server beyond the single POST: the tabs, the items
-and their categories are rendered into the markup and filtered client-side.
+Everything is built as a *layer* over the real form fields — the tab select,
+the table select and the line formset are all rendered for real, and the
+JavaScript at the bottom hides the ones it replaces and drives them from the
+picker. With scripting off, every step is simply visible at once and the page
+submits as the plain form it has always been.
+
+No price is rendered anywhere: the waiter takes orders, the till does money.
 {% endcomment %}
 
 {% block content %}
@@ -39,8 +44,13 @@ and their categories are rendered into the markup and filtered client-side.
         width at 360px.{% endcomment %}
         <div class="card border">
           <div class="card-body p-3 p-md-4">
-            <form method="post" novalidate id="order-form" class="karaoke-order">
+            <form method="post" novalidate id="order-form" class="karaoke-order"
+                  {% if submission_rejected %}data-order-rejected="1"{% endif %}>
               {% csrf_token %}
+
+              {% comment %}Errors live above the steps, never inside one: a
+              rejected submission has to be readable whichever step the waiter
+              lands on.{% endcomment %}
 
               {# Top-level submission errors raised by the view (e.g. oversell). #}
               {% if form_errors %}
@@ -55,210 +65,396 @@ and their categories are rendered into the markup and filtered client-side.
                 </div>
               {% endif %}
 
-              {% comment %}Comanda: search box over the open tabs, one tap to
-              choose. The real <select> stays in the DOM, hidden, because it is
-              what actually carries the choice to the server.{% endcomment %}
-              <fieldset class="karaoke-order-block">
-                <legend class="karaoke-legend mb-3">{% trans "Comanda" %}</legend>
-
-                {% if order_form.tab.errors %}
-                  <div class="alert alert-danger py-2" role="alert">
-                    {% for error in order_form.tab.errors %}{{ error|escape }}{% endfor %}
-                  </div>
-                {% endif %}
-
-                {% comment %}The real field. Hidden — not disabled — once the
-                picker takes over, so it keeps carrying the chosen comanda.{% endcomment %}
-                <div class="karaoke-field-narrow{% if order_form.tab.errors %} karaoke-field-invalid{% endif %}"
-                     data-order-plain>
-                  <label for="id_tab" class="form-label">{{ order_form.tab.label }}</label>
-                  {{ order_form.tab }}
+              {% if order_form.tab.errors %}
+                <div class="alert alert-danger py-2" role="alert">
+                  {% for error in order_form.tab.errors %}{{ error|escape }}{% endfor %}
                 </div>
+              {% endif %}
 
-                <div data-order-picker hidden>
-                  <label for="tab-search" class="form-label">{% trans "Buscar comanda" %}</label>
-                  <input type="search" id="tab-search" class="form-control form-control-lg karaoke-search"
-                         autocomplete="off"
-                         placeholder="{% trans 'Digite parte do nome…' %}"
-                         aria-controls="tab-picker">
+              {% if formset.non_form_errors %}
+                <div class="alert alert-danger py-2" role="alert">
+                  {% for error in formset.non_form_errors %}{{ error|escape }}{% endfor %}
+                </div>
+              {% endif %}
 
-                  <div class="karaoke-pick-grid karaoke-pick-grid-tabs mt-3" id="tab-picker" role="group"
-                       aria-label="{% trans 'Comandas abertas' %}">
-                    {% for tab in open_tabs %}
-                      <button type="button" class="karaoke-pick"
-                              data-tab-id="{{ tab.pk }}"
-                              data-tab-name="{{ tab.name }}"
-                              aria-pressed="false">
-                        <span class="karaoke-pick-name">{{ tab.name|escape }}</span>
-                        <span class="karaoke-pick-meta karaoke-micro">
-                          {% if tab.table %}
-                            {% trans "Mesa" %} {{ tab.table.name|escape }}
-                          {% else %}
-                            {% trans "sem mesa" %}
-                          {% endif %}
-                        </span>
-                      </button>
+              {% comment %}The progress indicator. Each chip is a button so a
+              waiter can jump back to a step already passed without hunting for
+              "Voltar"; jumping *forward* still runs the same gate the Avançar
+              button does.{% endcomment %}
+              <ol class="karaoke-steps" id="order-steps" data-order-picker hidden>
+                <li class="karaoke-steps-item">
+                  <button type="button" class="karaoke-step-chip" data-step-chip="1"
+                          data-step-title="{% trans 'Comanda' %}" aria-current="step">
+                    <span class="karaoke-step-num">1</span>
+                    <span class="karaoke-step-label">{% trans "Comanda" %}</span>
+                  </button>
+                </li>
+                <li class="karaoke-steps-item">
+                  <button type="button" class="karaoke-step-chip" data-step-chip="2"
+                          data-step-title="{% trans 'Itens' %}">
+                    <span class="karaoke-step-num">2</span>
+                    <span class="karaoke-step-label">{% trans "Itens" %}</span>
+                  </button>
+                </li>
+                <li class="karaoke-steps-item">
+                  <button type="button" class="karaoke-step-chip" data-step-chip="3"
+                          data-step-title="{% trans 'Confirmação' %}">
+                    <span class="karaoke-step-num">3</span>
+                    <span class="karaoke-step-label">{% trans "Confirmação" %}</span>
+                  </button>
+                </li>
+              </ol>
+
+              {% comment %}=== Step 1 — Comanda ==============================
+              The comanda plus, optionally, where to deliver it. The step
+              containers are plain <div>s that render visible: with scripting
+              off the three steps simply stack into the long form this page
+              used to be.{% endcomment %}
+              <div class="karaoke-step" data-step="1">
+
+                <fieldset class="karaoke-order-block">
+                  <legend class="karaoke-legend mb-3">{% trans "Comanda" %}</legend>
+
+                  {% comment %}The real field. Hidden — not disabled — once the
+                  picker takes over, so it keeps carrying the chosen comanda.{% endcomment %}
+                  <div class="karaoke-field-narrow{% if order_form.tab.errors %} karaoke-field-invalid{% endif %}"
+                       data-order-plain>
+                    <label for="id_tab" class="form-label">{{ order_form.tab.label }}</label>
+                    {{ order_form.tab }}
+                  </div>
+
+                  <div data-order-picker hidden>
+                    <label for="tab-search" class="form-label">{% trans "Buscar comanda" %}</label>
+                    <input type="search" id="tab-search" class="form-control form-control-lg karaoke-search"
+                           autocomplete="off"
+                           placeholder="{% trans 'Digite parte do nome…' %}"
+                           aria-controls="tab-picker">
+
+                    <div class="karaoke-pick-grid karaoke-pick-grid-tabs mt-3" id="tab-picker" role="group"
+                         aria-label="{% trans 'Comandas abertas' %}">
+                      {% for tab in open_tabs %}
+                        <button type="button" class="karaoke-pick"
+                                data-tab-id="{{ tab.pk }}"
+                                data-tab-name="{{ tab.name }}"
+                                aria-pressed="false">
+                          <span class="karaoke-pick-name">{{ tab.name|escape }}</span>
+                          <span class="karaoke-pick-meta karaoke-micro">
+                            {% if tab.table %}
+                              {% trans "Mesa" %} {{ tab.table.name|escape }}
+                            {% else %}
+                              {% trans "sem mesa" %}
+                            {% endif %}
+                          </span>
+                        </button>
+                      {% endfor %}
+                    </div>
+
+                    {% if not open_tabs %}
+                      <p class="karaoke-empty mb-0" data-tab-none>
+                        {% trans "Nenhuma comanda aberta. Abra uma comanda antes de lançar o pedido." %}
+                      </p>
+                    {% else %}
+                      <p class="karaoke-empty mb-0" data-tab-empty hidden>
+                        {% trans "Nenhuma comanda encontrada com esse nome." %}
+                      </p>
+                    {% endif %}
+                  </div>
+                </fieldset>
+
+                {% comment %}Mesa: optional delivery context. A handful of rows, so
+                a plain select stays the right control in both modes.{% endcomment %}
+                <fieldset class="karaoke-order-block">
+                  <legend class="karaoke-legend mb-3">{% trans "Mesa" %}</legend>
+
+                  <div class="karaoke-field-narrow{% if order_form.table.errors %} karaoke-field-invalid{% endif %}">
+                    <label for="id_table" class="form-label">{{ order_form.table.label }}</label>
+                    {{ order_form.table }}
+                    {% for error in order_form.table.errors %}
+                      <div class="invalid-feedback d-block">{{ error|escape }}</div>
                     {% endfor %}
-                  </div>
-
-                  {% if not open_tabs %}
-                    <p class="karaoke-empty mb-0" data-tab-none>
-                      {% trans "Nenhuma comanda aberta. Abra uma comanda antes de lançar o pedido." %}
+                    <p class="form-text karaoke-micro mt-2 mb-0">
+                      {% trans "Opcional — apenas onde entregar." %}
                     </p>
-                  {% else %}
-                    <p class="karaoke-empty mb-0" data-tab-empty hidden>
-                      {% trans "Nenhuma comanda encontrada com esse nome." %}
-                    </p>
-                  {% endif %}
-                </div>
-              </fieldset>
-
-              {% comment %}Mesa: optional delivery context. A handful of rows, so
-              a plain select stays the right control in both modes.{% endcomment %}
-              <fieldset class="karaoke-order-block">
-                <legend class="karaoke-legend mb-3">{% trans "Mesa" %}</legend>
-
-                <div class="karaoke-field-narrow{% if order_form.table.errors %} karaoke-field-invalid{% endif %}">
-                  <label for="id_table" class="form-label">{{ order_form.table.label }}</label>
-                  {{ order_form.table }}
-                  {% for error in order_form.table.errors %}
-                    <div class="invalid-feedback d-block">{{ error|escape }}</div>
-                  {% endfor %}
-                  <p class="form-text karaoke-micro mt-2 mb-0">
-                    {% trans "Opcional — apenas onde entregar." %}
-                  </p>
-                </div>
-              </fieldset>
-
-              {% comment %}Itens: category chips + name search over the sellable
-              catalogue, filtered client-side over the rendered data.{% endcomment %}
-              <fieldset class="karaoke-order-block">
-                <legend class="karaoke-legend mb-3">{% trans "Itens" %}</legend>
-
-                {{ formset.management_form }}
-
-                {% if formset.non_form_errors %}
-                  <div class="alert alert-danger py-2" role="alert">
-                    {% for error in formset.non_form_errors %}{{ error|escape }}{% endfor %}
                   </div>
-                {% endif %}
+                </fieldset>
+              </div>
 
-                {% comment %}Plain formset — the no-JS path, and the seed the
-                picker reads its lines back from after a rejected submission.{% endcomment %}
-                <div data-order-plain>
-                  <div class="table-responsive">
-                    <table class="table table-borderless align-middle mb-3" id="order-lines">
-                      <thead>
-                        <tr>
-                          <th scope="col">{% trans "Item" %}</th>
-                          <th scope="col" class="karaoke-line-qty">{% trans "Quantidade" %}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {% for line in formset.forms %}
-                          <tr class="order-line">
-                            <td class="{% if line.item.errors %}karaoke-field-invalid{% endif %}">
-                              {{ line.item }}
-                              {% for error in line.item.errors %}
-                                <div class="invalid-feedback d-block">{{ error|escape }}</div>
-                              {% endfor %}
-                            </td>
-                            <td class="karaoke-line-qty {% if line.quantity.errors %}karaoke-field-invalid{% endif %}">
-                              {{ line.quantity }}
-                              {% for error in line.quantity.errors %}
-                                <div class="invalid-feedback d-block">{{ error|escape }}</div>
-                              {% endfor %}
-                            </td>
+              {% comment %}=== Step 2 — Itens ================================
+              What is on the order so far, plus the surface that adds to it.
+              The add-item surface is deliberately kept as one self-contained
+              block: #232 replaces it with a modal and should only have to
+              move this piece.{% endcomment %}
+              <div class="karaoke-step" data-step="2">
+
+                <fieldset class="karaoke-order-block">
+                  <legend class="karaoke-legend mb-3">{% trans "Itens do pedido" %}</legend>
+
+                  {{ formset.management_form }}
+
+                  {% comment %}Plain formset — the no-JS path, and the seed the
+                  picker reads its lines back from after a rejected submission.{% endcomment %}
+                  <div data-order-plain>
+                    <div class="table-responsive">
+                      <table class="table table-borderless align-middle mb-3" id="order-lines">
+                        <thead>
+                          <tr>
+                            <th scope="col">{% trans "Item" %}</th>
+                            <th scope="col" class="karaoke-line-qty">{% trans "Quantidade" %}</th>
+                            <th scope="col">{% trans "Observação" %}</th>
                           </tr>
-                        {% endfor %}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div data-order-picker hidden>
-                  {% comment %}Chips scroll sideways on a narrow phone rather than
-                  wrapping into a wall of buttons; "Todos" is how you get back to
-                  the whole catalogue.{% endcomment %}
-                  <div class="karaoke-chip-row" id="category-chips" role="group"
-                       aria-label="{% trans 'Filtrar por categoria' %}">
-                    <button type="button" class="karaoke-filter-chip is-on"
-                            data-category="all" aria-pressed="true">{% trans "Todos" %}</button>
-                    {% for category in item_categories %}
-                      <button type="button" class="karaoke-filter-chip"
-                              data-category="{{ category.pk }}"
-                              aria-pressed="false">{{ category.name|escape }}</button>
-                    {% endfor %}
-                  </div>
-
-                  <label for="item-search" class="form-label mt-3">{% trans "Buscar item" %}</label>
-                  <input type="search" id="item-search" class="form-control form-control-lg karaoke-search"
-                         autocomplete="off"
-                         placeholder="{% trans 'Digite parte do nome…' %}"
-                         aria-controls="item-picker">
-
-                  <div class="karaoke-pick-grid mt-3" id="item-picker" role="group"
-                       aria-label="{% trans 'Itens disponíveis' %}">
-                    {% for item in sellable_items %}
-                      <button type="button" class="karaoke-pick"
-                              data-item-id="{{ item.pk }}"
-                              data-item-name="{{ item.name }}"
-                              data-item-price="{{ item.price|stringformat:'.2f' }}"
-                              data-item-stock="{{ item.stock }}"
-                              data-item-category="{{ item.category_id }}">
-                        <span class="karaoke-pick-name">{{ item.name|escape }}</span>
-                        <span class="karaoke-pick-meta karaoke-micro">
-                          R$ {{ item.price|stringformat:".2f" }} &middot; {{ item.category.name|escape }}
-                        </span>
-                        <span class="karaoke-pick-count" data-pick-count hidden></span>
-                      </button>
-                    {% endfor %}
+                        </thead>
+                        <tbody>
+                          {% for line in formset.forms %}
+                            <tr class="order-line">
+                              <td class="{% if line.item.errors %}karaoke-field-invalid{% endif %}">
+                                {{ line.item }}
+                                {% for error in line.item.errors %}
+                                  <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                                {% endfor %}
+                              </td>
+                              <td class="karaoke-line-qty {% if line.quantity.errors %}karaoke-field-invalid{% endif %}">
+                                {{ line.quantity }}
+                                {% for error in line.quantity.errors %}
+                                  <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                                {% endfor %}
+                              </td>
+                              {% comment %}The line's note for the kitchen (#229) —
+                              always optional, so it carries no required marker and
+                              an empty one submits exactly as before.{% endcomment %}
+                              <td class="{% if line.notes.errors %}karaoke-field-invalid{% endif %}">
+                                {{ line.notes }}
+                                {% for error in line.notes.errors %}
+                                  <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                                {% endfor %}
+                              </td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
-                  {% if not sellable_items %}
-                    <p class="karaoke-empty mb-0" data-item-none>
-                      {% trans "Nenhum item disponível para venda no momento." %}
+                  {% comment %}The running list of lines: quantity stepper, the
+                  per-line note for the kitchen (#229) and remove on each. No
+                  prices — the waiter only counts things.{% endcomment %}
+                  <div data-order-picker hidden>
+                    <ul class="karaoke-summary" id="order-summary"></ul>
+
+                    <p class="karaoke-empty mb-0" id="order-summary-empty">
+                      {% trans "Nenhum item no pedido ainda. Toque em “Adicionar item” para começar." %}
                     </p>
-                  {% else %}
-                    <p class="karaoke-empty mb-0" data-item-empty hidden>
-                      {% trans "Nenhum item encontrado com esse filtro." %}
-                    </p>
-                  {% endif %}
+
+                    {# The picker writes the formset's hidden inputs in here. #}
+                    <div id="order-line-inputs"></div>
+                  </div>
+                </fieldset>
+
+                  {% comment %}Adicionar item: a single button that opens the
+                full-screen picker modal (#232). The category strip, the name
+                search and the item grid all live inside that modal — step 2's
+                order list no longer offers inline item picking. The same
+                catalogue is rendered for real inside the modal, so the no-JS
+                plain-formset path above is the only thing the server actually
+                needs.{% endcomment %}
+                <div class="karaoke-order-block karaoke-add-item-row" data-order-picker hidden>
+                  <button type="button" class="btn btn-primary karaoke-add-item-btn"
+                          data-bs-toggle="modal"
+                          data-bs-target="#add-item-modal">
+                    {% trans "Adicionar item" %}
+                  </button>
                 </div>
-              </fieldset>
+              </div>
 
-              {% comment %}Resumo: what is on the order, with per-line quantity
-              controls, a remove action and a running total.{% endcomment %}
-              <fieldset class="karaoke-order-block" data-order-picker hidden>
-                <legend class="karaoke-legend mb-3">{% trans "Resumo do pedido" %}</legend>
+              {% comment %}=== Step 3 — Confirmação ==========================
+              A read-only recap, built by the script from the same state the
+              hidden inputs carry, and the only place the order can be sent.
+              With scripting off this step renders nothing: the plain action
+              row below is the no-JS submit.{% endcomment %}
+              <div class="karaoke-step" data-step="3">
+                <fieldset class="karaoke-order-block" data-order-picker hidden>
+                  <legend class="karaoke-legend mb-3">{% trans "Confirmação" %}</legend>
 
-                <ul class="karaoke-summary" id="order-summary"></ul>
+                  <dl class="karaoke-recap" id="order-recap"></dl>
 
-                <p class="karaoke-empty mb-0" id="order-summary-empty">
-                  {% trans "Nenhum item no pedido ainda. Toque em um item acima para adicioná-lo." %}
-                </p>
-
-                {# The picker writes the formset's hidden inputs in here. #}
-                <div id="order-line-inputs"></div>
-              </fieldset>
+                  <ul class="karaoke-summary karaoke-recap-lines" id="order-recap-lines"></ul>
+                </fieldset>
+              </div>
 
               <div class="karaoke-actions" data-order-plain>
                 <a href="{% url 'core:home' %}" class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Cancelar" %}</a>
                 <button type="submit" class="btn btn-primary">{% trans "Registrar pedido" %}</button>
               </div>
 
-              {% comment %}On a phone the submit has to stay under the thumb while
-              the waiter scrolls the catalogue, so in picker mode it rides a sticky
-              bar instead of the bottom-of-form action row.{% endcomment %}
+              {% comment %}On a phone the step navigation has to stay under the
+              thumb while the waiter scrolls the catalogue, so in picker mode it
+              rides a sticky bar instead of the bottom of the form. "Registrar
+              pedido" only appears here on step 3.{% endcomment %}
               <div class="karaoke-submit-bar" data-order-picker hidden>
-                <div class="karaoke-submit-bar-total">
-                  <span class="karaoke-micro d-block">{% trans "Total" %}</span>
-                  <strong id="order-total" class="karaoke-title">R$ 0.00</strong>
+                <p class="karaoke-wizard-hint mb-0" data-wizard-hint role="status" aria-live="polite" hidden></p>
+
+                <div class="karaoke-wizard-status">
+                  <span class="karaoke-micro d-block" data-wizard-count></span>
+                  <strong class="karaoke-title" data-wizard-title></strong>
                 </div>
                 <div class="karaoke-submit-bar-actions">
                   <a href="{% url 'core:home' %}"
-                     class="btn btn-outline-secondary karaoke-btn-ghost">{% trans "Cancelar" %}</a>
-                  <button type="submit" class="btn btn-primary">{% trans "Registrar pedido" %}</button>
+                     class="btn btn-outline-secondary karaoke-btn-ghost" data-wizard-cancel>{% trans "Cancelar" %}</a>
+                  <button type="button" class="btn btn-outline-secondary karaoke-btn-ghost"
+                          data-wizard-back hidden>{% trans "Voltar" %}</button>
+                  <button type="button" class="btn btn-primary" data-wizard-next>{% trans "Avançar" %}</button>
+                  <button type="submit" class="btn btn-primary" data-wizard-submit hidden>{% trans "Registrar pedido" %}</button>
+                </div>
+              </div>
+
+              {% comment %}=== Add-item modal (#232) =========================
+              A full-screen Bootstrap modal: a horizontally scrollable category
+              strip pinned at the top (one chip per sellable category plus
+              "Todos"), a text filter below it, and the list of sellable items
+              matching both. Tapping an item opens the quantity/notes dialog.
+              The modal carries the real catalogue data — no second endpoint,
+              no JSON — and is a layer only: nothing here posts by itself, the
+              script writes the chosen lines into the hidden formset inputs
+              above. With scripting off the modal markup is inert and the plain
+              formset rows above are what the waiter submits.
+              No price anywhere — the waiter counts things, the till does money.
+              {% endcomment %}
+              <div class="modal fade karaoke-modal karaoke-add-item-modal" id="add-item-modal"
+                   tabindex="-1" aria-labelledby="add-item-modal-title" aria-hidden="true"
+                   data-order-picker hidden>
+                <div class="modal-dialog modal-fullscreen" role="dialog" aria-modal="true">
+                  <div class="modal-content">
+                    <div class="modal-header">
+                      <h2 class="modal-title h5 mb-0" id="add-item-modal-title">{% trans "Adicionar item" %}</h2>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal"
+                              aria-label="{% trans 'Fechar' %}"></button>
+                    </div>
+
+                    {% comment %}The category strip is pinned at the top of the
+                    modal body: it stays put while the item list scrolls under
+                    it. "Todos" is active by default.{% endcomment %}
+                    <div class="modal-body karaoke-modal-body p-0">
+                      <div class="karaoke-modal-sticky">
+                        <div class="karaoke-chip-row karaoke-modal-chips" id="category-chips"
+                             role="group" aria-label="{% trans 'Filtrar por categoria' %}">
+                          <button type="button" class="karaoke-filter-chip is-on"
+                                  data-category="all" aria-pressed="true">{% trans "Todos" %}</button>
+                          {% for category in item_categories %}
+                            <button type="button" class="karaoke-filter-chip"
+                                    data-category="{{ category.pk }}"
+                                    aria-pressed="false">{{ category.name|escape }}</button>
+                          {% endfor %}
+                        </div>
+
+                        <div class="karaoke-modal-search">
+                          <label for="item-search" class="form-label visually-hidden">{% trans "Buscar item" %}</label>
+                          <input type="search" id="item-search"
+                                 class="form-control form-control-lg karaoke-search"
+                                 autocomplete="off"
+                                 placeholder="{% trans 'Digite parte do nome…' %}"
+                                 aria-controls="item-picker">
+                        </div>
+                      </div>
+
+                      <div class="karaoke-modal-scroll">
+                        <div class="karaoke-pick-grid" id="item-picker" role="group"
+                             aria-label="{% trans 'Itens disponíveis' %}">
+                          {% for item in sellable_items %}
+                            {% with suggestions=item.note_suggestions.all %}
+                            <button type="button" class="karaoke-pick"
+                                    data-item-id="{{ item.pk }}"
+                                    data-item-name="{{ item.name }}"
+                                    data-item-stock="{{ item.stock }}"
+                                    data-item-category="{{ item.category_id }}"
+                                    data-item-suggestions="{% for s in suggestions %}{{ s.text|escapejs }}{% if not forloop.last %}||{% endif %}{% endfor %}">
+                              <span class="karaoke-pick-name">{{ item.name|escape }}</span>
+                              <span class="karaoke-pick-meta karaoke-micro">{{ item.category.name|escape }}</span>
+                              <span class="karaoke-pick-count" data-pick-count hidden></span>
+                            </button>
+                            {% endwith %}
+                          {% endfor %}
+                        </div>
+
+                        {% if not sellable_items %}
+                          <p class="karaoke-empty m-3" data-item-none>
+                            {% trans "Nenhum item disponível para venda no momento." %}
+                          </p>
+                        {% else %}
+                          <p class="karaoke-empty m-3" data-item-empty hidden>
+                            {% trans "Nenhum item encontrado com esse filtro." %}
+                          </p>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {% comment %}=== Quantity / notes dialog (#232) =================
+              A second, smaller Bootstrap modal opened from the add-item modal.
+              Asks for the quantity (default 1, minimum 1, capped at the item's
+              current stock) and an optional free-text note. Next to the notes
+              field the item's suggestion chips from #230 are rendered as
+              data on the chosen item and cloned in here by the script —
+              tapping a chip inserts its text into the notes field. Items
+              without suggestions simply show no chip row. Confirming closes
+              both layers and appends the line to step 2's order list; the
+              same item may be added again as a separate line (e.g. with
+              different notes), so nothing here de-duplicates.
+              No price here either.
+              {% endcomment %}
+              <div class="modal fade karaoke-modal karaoke-line-dialog" id="line-dialog"
+                   tabindex="-1" aria-labelledby="line-dialog-title" aria-hidden="true"
+                   data-order-picker hidden>
+                <div class="modal-dialog modal-dialog-centered" role="dialog" aria-modal="true">
+                  <div class="modal-content">
+                    <div class="modal-header">
+                      <h2 class="modal-title h5 mb-0" id="line-dialog-title"></h2>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal"
+                              aria-label="{% trans 'Fechar' %}"></button>
+                    </div>
+                    <div class="modal-body">
+                      <div class="mb-3">
+                        <label for="line-dialog-qty" class="form-label">{% trans "Quantidade" %}</label>
+                        <div class="karaoke-qty karaoke-qty-dialog" id="line-dialog-qty-stepper">
+                          <button type="button" class="karaoke-qty-btn" id="line-dialog-qty-less"
+                                  aria-label="{% trans 'Diminuir quantidade' %}">&minus;</button>
+                          <input type="number" id="line-dialog-qty"
+                                 class="form-control karaoke-qty-input"
+                                 min="1" value="1" inputmode="numeric">
+                          <button type="button" class="karaoke-qty-btn" id="line-dialog-qty-more"
+                                  aria-label="{% trans 'Aumentar quantidade' %}">+</button>
+                        </div>
+                        <p class="form-text karaoke-micro mt-2 mb-0" id="line-dialog-stock-hint"
+                           hidden></p>
+                      </div>
+
+                      <div class="mb-3">
+                        <label for="line-dialog-notes" class="form-label">{% trans "Observação" %}</label>
+                        <input type="text" id="line-dialog-notes"
+                               class="form-control"
+                               maxlength="200" autocomplete="off"
+                               placeholder="{% trans 'Observação (ex.: com gelo e limão)' %}">
+                      </div>
+
+                      {% comment %}The suggestion chips for the picked item. The
+                      script rebuilds this row per item from the data carried on
+                      each catalogue button, so the row is empty until an item
+                      is tapped and items without suggestions show no chips.{% endcomment %}
+                      <div class="karaoke-chip-row karaoke-suggestion-chips"
+                           id="line-dialog-suggestions" role="group"
+                           aria-label="{% trans 'Sugestões de observação' %}"></div>
+                      <p class="karaoke-empty karaoke-suggestions-empty mb-0" id="line-dialog-no-suggestions" hidden>
+                        {% trans "Nenhuma sugestão cadastrada para este item." %}
+                      </p>
+                    </div>
+                    <div class="modal-footer">
+                      <button type="button" class="btn btn-outline-secondary karaoke-btn-ghost"
+                              data-bs-dismiss="modal">{% trans "Cancelar" %}</button>
+                      <button type="button" class="btn btn-primary" id="line-dialog-confirm">
+                        {% trans "Confirmar" %}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </form>
@@ -277,6 +473,14 @@ and their categories are rendered into the markup and filtered client-side.
 {% trans "Quantidade" as text_qty %}
 {% trans "acima do estoque" as text_over %}
 {% trans "em estoque" as text_stock %}
+{% trans "Observação" as text_note %}
+{% trans "Observação (ex.: com gelo e limão)" as text_note_hint %}
+{% trans "Passo {n} de {total}" as text_step_of %}
+{% trans "Comanda" as text_tab %}
+{% trans "Mesa" as text_table %}
+{% trans "sem mesa" as text_no_table %}
+{% trans "Escolha uma comanda para avançar." as text_need_tab %}
+{% trans "Adicione ao menos um item para avançar." as text_need_items %}
 <script>
 (function () {
   "use strict";
@@ -290,7 +494,15 @@ and their categories are rendered into the markup and filtered client-side.
     more: "{{ text_more|escapejs }}",
     qty: "{{ text_qty|escapejs }}",
     over: "{{ text_over|escapejs }}",
-    stock: "{{ text_stock|escapejs }}"
+    stock: "{{ text_stock|escapejs }}",
+    note: "{{ text_note|escapejs }}",
+    noteHint: "{{ text_note_hint|escapejs }}",
+    stepOf: "{{ text_step_of|escapejs }}",
+    tab: "{{ text_tab|escapejs }}",
+    table: "{{ text_table|escapejs }}",
+    noTable: "{{ text_no_table|escapejs }}",
+    needTab: "{{ text_need_tab|escapejs }}",
+    needItems: "{{ text_need_items|escapejs }}"
   };
 
   // --- helpers -------------------------------------------------------------
@@ -306,10 +518,6 @@ and their categories are rendered into the markup and filtered client-side.
       .trim();
   }
 
-  function money(value) {
-    return "R$ " + value.toFixed(2);
-  }
-
   function show(el, visible) {
     if (el) el.hidden = !visible;
   }
@@ -319,39 +527,68 @@ and their categories are rendered into the markup and filtered client-side.
   var plainBlocks = form.querySelectorAll("[data-order-plain]");
   var pickerBlocks = form.querySelectorAll("[data-order-picker]");
   var tabSelect = document.getElementById("id_tab");
+  var tableSelect = document.getElementById("id_table");
   var totalForms = document.getElementById("id_lines-TOTAL_FORMS");
   var lineRows = document.querySelectorAll("#order-lines tbody tr");
   var lineInputs = document.getElementById("order-line-inputs");
   var summaryList = document.getElementById("order-summary");
   var summaryEmpty = document.getElementById("order-summary-empty");
-  var totalOutput = document.getElementById("order-total");
 
   if (!tabSelect || !totalForms || !lineInputs || !summaryList) return;
 
   // The catalogue, keyed by id, read straight off the rendered buttons — no
-  // second source of truth and no JSON endpoint.
+  // second source of truth and no JSON endpoint. No price here: the waiter's
+  // screen never shows money, so the script never carries any.
   var itemButtons = Array.prototype.slice.call(
     document.querySelectorAll("#item-picker [data-item-id]")
   );
   var catalogue = {};
   itemButtons.forEach(function (button) {
+    // Suggestions ride on a `||`-joined data attribute (#230 → #232): the
+    // dialog clones them into chips next to the notes field. An item with no
+    // suggestions simply yields an empty array, which renders no chip row.
+    var raw = button.dataset.itemSuggestions || "";
+    var suggestions = raw
+      .split("||")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
     catalogue[button.dataset.itemId] = {
       id: button.dataset.itemId,
       name: button.dataset.itemName,
-      price: parseFloat(button.dataset.itemPrice) || 0,
       stock: parseInt(button.dataset.itemStock, 10) || 0,
+      suggestions: suggestions,
       button: button
     };
   });
 
-  // Lines currently on the order, in the order they were tapped.
+  // Lines currently on the order, in the order they were tapped. Since #232
+  // the same item may appear on more than one line (e.g. with different
+  // notes), so a line is keyed by a generated `lid` — not by its item id.
   var order = [];
+  var lineSeq = 0;
 
-  function findLine(itemId) {
+  function newLineId() {
+    lineSeq += 1;
+    return "l" + String(lineSeq);
+  }
+
+  function findLine(lid) {
     for (var i = 0; i < order.length; i++) {
-      if (order[i].id === itemId) return order[i];
+      if (order[i].lid === lid) return order[i];
     }
     return null;
+  }
+
+  // Total quantity already on the order for a given item, across every line
+  // that references it — used to badge the catalogue buttons and to cap the
+  // quantity dialog. The server still aggregates demand per item against
+  // stock, so this is the client-side mirror of the same check.
+  function quantityForItem(itemId) {
+    var total = 0;
+    order.forEach(function (line) {
+      if (line.id === itemId) total += line.quantity;
+    });
+    return total;
   }
 
   // --- the order summary ----------------------------------------------------
@@ -368,16 +605,14 @@ and their categories are rendered into the markup and filtered client-side.
 
   function renderSummary() {
     summaryList.textContent = "";
-    var total = 0;
 
     order.forEach(function (line) {
       var entry = catalogue[line.id];
-      var price = entry ? entry.price : 0;
       var stock = entry ? entry.stock : 0;
-      total += price * line.quantity;
 
       var row = document.createElement("li");
       row.className = "karaoke-summary-line";
+      row.dataset.lid = line.lid;
 
       var label = document.createElement("div");
       label.className = "karaoke-summary-label";
@@ -387,11 +622,6 @@ and their categories are rendered into the markup and filtered client-side.
       name.textContent = line.name;
       label.appendChild(name);
 
-      var meta = document.createElement("span");
-      meta.className = "karaoke-pick-meta karaoke-micro";
-      meta.textContent = money(price) + " · " + money(price * line.quantity);
-      label.appendChild(meta);
-
       // Going over stock is allowed here on purpose: the server owns that
       // rule and refuses the whole submission, so the picker only warns.
       if (entry && line.quantity > stock) {
@@ -399,6 +629,16 @@ and their categories are rendered into the markup and filtered client-side.
         warning.className = "badge karaoke-chip karaoke-chip-alert";
         warning.textContent = TEXT.over + " (" + stock + " " + TEXT.stock + ")";
         label.appendChild(warning);
+      }
+
+      // The note set in the add-item dialog (#232), shown read-only on the
+      // summary. Editing a line's note means removing it and adding the item
+      // again — the dialog is the only entry point for notes now.
+      if (line.notes) {
+        var noteOut = document.createElement("span");
+        noteOut.className = "karaoke-summary-note";
+        noteOut.textContent = line.notes;
+        label.appendChild(noteOut);
       }
 
       row.appendChild(label);
@@ -410,7 +650,7 @@ and their categories are rendered into the markup and filtered client-side.
       stepper.className = "karaoke-qty";
       stepper.appendChild(
         stepButton(TEXT.less, "−", function () {
-          setQuantity(line.id, line.quantity - 1);
+          setQuantity(line.lid, line.quantity - 1);
         })
       );
 
@@ -422,13 +662,13 @@ and their categories are rendered into the markup and filtered client-side.
       quantity.value = String(line.quantity);
       quantity.setAttribute("aria-label", TEXT.qty + " — " + line.name);
       quantity.addEventListener("change", function () {
-        setQuantity(line.id, parseInt(quantity.value, 10));
+        setQuantity(line.lid, parseInt(quantity.value, 10));
       });
       stepper.appendChild(quantity);
 
       stepper.appendChild(
         stepButton(TEXT.more, "+", function () {
-          setQuantity(line.id, line.quantity + 1);
+          setQuantity(line.lid, line.quantity + 1);
         })
       );
       controls.appendChild(stepper);
@@ -439,7 +679,7 @@ and their categories are rendered into the markup and filtered client-side.
       remove.setAttribute("aria-label", TEXT.remove + " — " + line.name);
       remove.textContent = TEXT.remove;
       remove.addEventListener("click", function () {
-        removeLine(line.id);
+        removeLine(line.lid);
       });
       controls.appendChild(remove);
 
@@ -448,23 +688,25 @@ and their categories are rendered into the markup and filtered client-side.
     });
 
     show(summaryEmpty, order.length === 0);
-    if (totalOutput) totalOutput.textContent = money(total);
     renderCounts();
     writeFormset();
+    refreshWizard();
   }
 
   // Each catalogue button shows how many of it are already on the order, so
-  // the waiter can see the effect of the tap without leaving the grid.
+  // the waiter can see the effect of the tap without leaving the grid. Since
+  // #232 the same item may be on several lines, so the count is the sum
+  // across every line that references it.
   function renderCounts() {
     itemButtons.forEach(function (button) {
-      // Not aria-pressed: tapping an item adds another one, it does not
+      // Not aria-pressed: tapping an item opens the dialog, it does not
       // toggle a state. The count inside the button is what announces it.
       var badge = button.querySelector("[data-pick-count]");
-      var line = findLine(button.dataset.itemId);
-      button.classList.toggle("is-selected", !!line);
+      var total = quantityForItem(button.dataset.itemId);
+      button.classList.toggle("is-selected", total > 0);
       if (!badge) return;
-      badge.textContent = line ? line.quantity + "×" : "";
-      show(badge, !!line);
+      badge.textContent = total > 0 ? total + "×" : "";
+      show(badge, total > 0);
     });
   }
 
@@ -484,36 +726,47 @@ and their categories are rendered into the markup and filtered client-side.
       quantity.name = "lines-" + index + "-quantity";
       quantity.value = String(line.quantity);
       lineInputs.appendChild(quantity);
+
+      var notes = document.createElement("input");
+      notes.type = "hidden";
+      notes.name = "lines-" + index + "-notes";
+      notes.value = line.notes || "";
+      lineInputs.appendChild(notes);
     });
     totalForms.value = String(order.length);
   }
 
-  function addItem(itemId) {
+  // Confirming the quantity/notes dialog appends a brand-new line (#232): the
+  // same item can be added twice, as separate lines with different notes, so
+  // nothing here de-duplicates. The dialog owns quantity and notes; the
+  // summary's stepper is the only way to adjust an existing line's quantity.
+  function addLine(itemId, quantity, notes) {
     var entry = catalogue[itemId];
     if (!entry) return;
-    var line = findLine(itemId);
-    if (line) {
-      line.quantity += 1;
-    } else {
-      order.push({ id: itemId, name: entry.name, quantity: 1 });
-    }
+    order.push({
+      lid: newLineId(),
+      id: itemId,
+      name: entry.name,
+      quantity: quantity,
+      notes: notes || ""
+    });
     renderSummary();
   }
 
-  function setQuantity(itemId, quantity) {
-    var line = findLine(itemId);
+  function setQuantity(lid, quantity) {
+    var line = findLine(lid);
     if (!line) return;
     if (!quantity || isNaN(quantity) || quantity < 1) {
-      removeLine(itemId);
+      removeLine(lid);
       return;
     }
     line.quantity = quantity;
     renderSummary();
   }
 
-  function removeLine(itemId) {
+  function removeLine(lid) {
     order = order.filter(function (line) {
-      return line.id !== itemId;
+      return line.lid !== lid;
     });
     renderSummary();
   }
@@ -557,9 +810,160 @@ and their categories are rendered into the markup and filtered client-side.
 
   itemButtons.forEach(function (button) {
     button.addEventListener("click", function () {
-      addItem(button.dataset.itemId);
+      openLineDialog(button.dataset.itemId);
     });
   });
+
+  // --- the quantity / notes dialog (#232) ----------------------------------
+  //
+  // A second Bootstrap modal, opened from the add-item modal. Asks for the
+  // quantity (default 1, minimum 1, capped at the item's current stock) and
+  // an optional free-text note. The item's suggestion chips from #230 are
+  // rendered next to the notes field; tapping one inserts its text. Confirm
+  // closes both layers and appends a new line to step 2's order list — the
+  // same item may be added again as a separate line, so nothing here
+  // de-duplicates. No price is shown here either.
+
+  var lineDialogEl = document.getElementById("line-dialog");
+  var addItemDialogEl = document.getElementById("add-item-modal");
+  var lineDialogTitle = document.getElementById("line-dialog-title");
+  var lineDialogQty = document.getElementById("line-dialog-qty");
+  var lineDialogQtyLess = document.getElementById("line-dialog-qty-less");
+  var lineDialogQtyMore = document.getElementById("line-dialog-qty-more");
+  var lineDialogNotes = document.getElementById("line-dialog-notes");
+  var lineDialogSuggestions = document.getElementById("line-dialog-suggestions");
+  var lineDialogNoSuggestions = document.getElementById("line-dialog-no-suggestions");
+  var lineDialogStockHint = document.getElementById("line-dialog-stock-hint");
+  var lineDialogConfirm = document.getElementById("line-dialog-confirm");
+
+  // Bootstrap's Modal API is loaded from the vendor bundle in base.html.
+  var bsModalCtor = window.bootstrap && window.bootstrap.Modal;
+  var lineDialog = bsModalCtor ? bsModalCtor.getOrCreateInstance(lineDialogEl) : null;
+  var addItemDialog = bsModalCtor ? bsModalCtor.getOrCreateInstance(addItemDialogEl) : null;
+
+  // The item the dialog is currently editing. Captured in closure so the
+  // confirm handler does not need a second lookup.
+  var dialogItem = null;
+
+  function clampQuantity(value, max) {
+    var n = parseInt(value, 10);
+    if (isNaN(n) || n < 1) return 1;
+    if (max && n > max) return max;
+    return n;
+  }
+
+  function openLineDialog(itemId) {
+    var entry = catalogue[itemId];
+    if (!entry) return;
+    dialogItem = entry;
+
+    lineDialogTitle.textContent = entry.name;
+
+    // Default 1, minimum 1, capped at the item's current stock. The cap is a
+    // client-side convenience only — the server still re-validates under a
+    // lock on submission, so a race cannot oversell.
+    var max = entry.stock > 0 ? entry.stock : 1;
+    lineDialogQty.min = "1";
+    lineDialogQty.max = String(max);
+    lineDialogQty.value = "1";
+
+    if (lineDialogStockHint) {
+      lineDialogStockHint.textContent = TEXT.stock + ": " + max;
+      show(lineDialogStockHint, max > 0);
+    }
+
+    lineDialogNotes.value = "";
+
+    // Suggestion chips from #230, rebuilt per item from the data carried on
+    // each catalogue button. Items without suggestions show no chip row.
+    lineDialogSuggestions.textContent = "";
+    var suggestions = entry.suggestions || [];
+    suggestions.forEach(function (text) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "karaoke-filter-chip karaoke-suggestion-chip";
+      chip.textContent = text;
+      chip.addEventListener("click", function () {
+        // Tapping a chip inserts its text into the notes field. "Insert" per
+        // the spec: replace, rather than append, so repeated taps do not pile
+        // up duplicates — a single chip carries one suggestion, one tap.
+        lineDialogNotes.value = text;
+        lineDialogNotes.focus();
+      });
+      lineDialogSuggestions.appendChild(chip);
+    });
+    show(lineDialogNoSuggestions, suggestions.length === 0);
+
+    if (lineDialog) {
+      // Open the dialog on top of the add-item modal. Bootstrap stacks
+      // modals; the backdrop of the second sits over the first, and
+      // dismissing either returns to the right layer.
+      lineDialog.show();
+    } else {
+      // No Bootstrap JS: fall back to un-hiding the dialog element directly.
+      lineDialogEl.hidden = false;
+    }
+  }
+
+  function closeLineDialog() {
+    if (lineDialog) {
+      lineDialog.hide();
+    } else {
+      lineDialogEl.hidden = true;
+    }
+  }
+
+  function closeAddItemModal() {
+    if (addItemDialog) {
+      addItemDialog.hide();
+    } else {
+      addItemDialogEl.hidden = true;
+    }
+  }
+
+  function setDialogQuantity(value) {
+    var max = dialogItem && dialogItem.stock > 0 ? dialogItem.stock : 1;
+    lineDialogQty.value = String(clampQuantity(value, max));
+  }
+
+  if (lineDialogQtyLess) {
+    lineDialogQtyLess.addEventListener("click", function () {
+      setDialogQuantity(parseInt(lineDialogQty.value, 10) - 1);
+    });
+  }
+  if (lineDialogQtyMore) {
+    lineDialogQtyMore.addEventListener("click", function () {
+      setDialogQuantity(parseInt(lineDialogQty.value, 10) + 1);
+    });
+  }
+  if (lineDialogQty) {
+    lineDialogQty.addEventListener("change", function () {
+      setDialogQuantity(lineDialogQty.value);
+    });
+  }
+
+  if (lineDialogConfirm) {
+    lineDialogConfirm.addEventListener("click", function () {
+      if (!dialogItem) return;
+      var qty = clampQuantity(lineDialogQty.value, dialogItem.stock);
+      var notes = lineDialogNotes.value || "";
+      addLine(dialogItem.id, qty, notes);
+      // Confirming closes both layers: the dialog and the add-item modal.
+      closeLineDialog();
+      closeAddItemModal();
+    });
+  }
+
+  // Reset the dialog when it finishes hiding so a next open starts clean.
+  if (lineDialogEl) {
+    lineDialogEl.addEventListener("hidden.bs.modal", function () {
+      dialogItem = null;
+      lineDialogNotes.value = "";
+      lineDialogQty.value = "1";
+      lineDialogSuggestions.textContent = "";
+      show(lineDialogNoSuggestions, false);
+    });
+  }
 
   // --- the comanda picker ---------------------------------------------------
 
@@ -593,29 +997,217 @@ and their categories are rendered into the markup and filtered client-side.
       // Drive the real <select>; it is what the server actually reads.
       tabSelect.value = button.dataset.tabId;
       renderTabSelection();
+      refreshWizard();
     });
   });
 
   if (tabSearch) tabSearch.addEventListener("input", filterTabs);
+  tabSelect.addEventListener("change", function () {
+    renderTabSelection();
+    refreshWizard();
+  });
+
+  // --- the wizard -----------------------------------------------------------
+  //
+  // Three steps over one form. Nothing here posts, nothing here is a route:
+  // the sections are all in the DOM the whole time and the state — chosen
+  // comanda, chosen mesa, lines — lives in the real fields, so stepping back
+  // and forth cannot lose it.
+
+  var STEP_COUNT = 3;
+  var steps = Array.prototype.slice.call(form.querySelectorAll("[data-step]"));
+  var stepChips = Array.prototype.slice.call(
+    form.querySelectorAll("[data-step-chip]")
+  );
+  var hint = form.querySelector("[data-wizard-hint]");
+  var countOut = form.querySelector("[data-wizard-count]");
+  var titleOut = form.querySelector("[data-wizard-title]");
+  var backButton = form.querySelector("[data-wizard-back]");
+  var nextButton = form.querySelector("[data-wizard-next]");
+  var submitButton = form.querySelector("[data-wizard-submit]");
+  var cancelLink = form.querySelector("[data-wizard-cancel]");
+  var recap = document.getElementById("order-recap");
+  var recapLines = document.getElementById("order-recap-lines");
+
+  var current = 1;
+
+  function selectedText(select) {
+    if (!select || select.selectedIndex < 0) return "";
+    if (!select.value) return "";
+    return (select.options[select.selectedIndex].text || "").trim();
+  }
+
+  // Why a step cannot be left yet, or "" when it can. One place, so the
+  // Avançar button, the chips and the submit guard all agree.
+  function blockedReason(step) {
+    if (step === 1 && !tabSelect.value) return TEXT.needTab;
+    if (step === 2 && order.length === 0) return TEXT.needItems;
+    return "";
+  }
+
+  function stepTitle(step) {
+    var chip = stepChips[step - 1];
+    return chip ? chip.dataset.stepTitle || "" : "";
+  }
+
+  // The read-only recap: comanda, mesa (or "sem mesa") and every line with
+  // its quantity. Rebuilt on every entry to step 3 so it can never show a
+  // stale order.
+  function renderRecap() {
+    if (!recap || !recapLines) return;
+    recap.textContent = "";
+    recapLines.textContent = "";
+
+    function pair(term, value) {
+      var row = document.createElement("div");
+      row.className = "karaoke-recap-row";
+      var dt = document.createElement("dt");
+      dt.textContent = term;
+      var dd = document.createElement("dd");
+      dd.textContent = value;
+      row.appendChild(dt);
+      row.appendChild(dd);
+      recap.appendChild(row);
+    }
+
+    pair(TEXT.tab, selectedText(tabSelect));
+    pair(TEXT.table, selectedText(tableSelect) || TEXT.noTable);
+
+    order.forEach(function (line) {
+      var row = document.createElement("li");
+      row.className = "karaoke-summary-line";
+
+      var name = document.createElement("span");
+      name.className = "karaoke-pick-name";
+      name.textContent = line.name;
+      row.appendChild(name);
+
+      var quantity = document.createElement("span");
+      quantity.className = "karaoke-recap-qty";
+      quantity.textContent = line.quantity + "×";
+      row.appendChild(quantity);
+
+      // The note is part of the line the kitchen will read (#229), so the
+      // confirmation step has to show it too — read-only, like the rest.
+      if (line.notes) {
+        var noteOut = document.createElement("span");
+        noteOut.className = "karaoke-recap-note";
+        noteOut.textContent = line.notes;
+        row.appendChild(noteOut);
+      }
+
+      recapLines.appendChild(row);
+    });
+  }
+
+  function refreshWizard() {
+    steps.forEach(function (section) {
+      section.hidden = parseInt(section.dataset.step, 10) !== current;
+    });
+
+    stepChips.forEach(function (chip) {
+      var step = parseInt(chip.dataset.stepChip, 10);
+      chip.classList.toggle("is-current", step === current);
+      chip.classList.toggle("is-done", step < current);
+      if (step === current) {
+        chip.setAttribute("aria-current", "step");
+      } else {
+        chip.removeAttribute("aria-current");
+      }
+    });
+
+    if (countOut) {
+      countOut.textContent = TEXT.stepOf
+        .replace("{n}", String(current))
+        .replace("{total}", String(STEP_COUNT));
+    }
+    if (titleOut) titleOut.textContent = stepTitle(current);
+
+    show(backButton, current > 1);
+    show(cancelLink, current === 1);
+    show(nextButton, current < STEP_COUNT);
+    // The order can only be sent from the confirmation step.
+    show(submitButton, current === STEP_COUNT);
+
+    // A disabled Avançar with no explanation is a dead end, so the reason is
+    // spelled out above it the whole time the gate is shut — it reads as the
+    // instruction it is, not as an error the waiter has to provoke.
+    var reason = blockedReason(current);
+    if (nextButton) nextButton.disabled = !!reason;
+    if (hint) {
+      hint.textContent = reason;
+      show(hint, !!reason);
+    }
+
+    if (current === STEP_COUNT) renderRecap();
+  }
+
+  function goTo(step) {
+    if (step < 1 || step > STEP_COUNT) return;
+    // Going back is always allowed; going forward has to clear the gate of
+    // every step in between.
+    for (var at = current; at < step; at++) {
+      if (blockedReason(at)) {
+        current = at;
+        refreshWizard();
+        return;
+      }
+    }
+    current = step;
+    refreshWizard();
+    if (typeof form.scrollIntoView === "function") {
+      form.scrollIntoView({ block: "start" });
+    }
+  }
+
+  if (nextButton) {
+    nextButton.addEventListener("click", function () {
+      goTo(current + 1);
+    });
+  }
+  if (backButton) {
+    backButton.addEventListener("click", function () {
+      goTo(current - 1);
+    });
+  }
+  stepChips.forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      goTo(parseInt(chip.dataset.stepChip, 10));
+    });
+  });
+
+  // Last line of defence: Enter in a search box must not post the order from
+  // step 1. In enhanced mode the form only submits from the confirmation step.
+  form.addEventListener("submit", function (event) {
+    if (current !== STEP_COUNT) {
+      event.preventDefault();
+      goTo(current + 1);
+    }
+  });
 
   // --- seed from whatever the server rendered --------------------------------
 
   // After a rejected submission the server re-renders the plain rows with the
   // waiter's lines still in them; read them back so the picker comes up
-  // showing the same order instead of an empty one.
+  // showing the same order instead of an empty one. Since #232 each rejected
+  // row becomes its own line — the same item on two rows stays as two lines,
+  // preserving the notes the waiter typed on each.
   Array.prototype.forEach.call(lineRows, function (row) {
     var select = row.querySelector("select");
     var quantity = row.querySelector("input[type=number]");
+    var notes = row.querySelector("input[name$='-notes']");
     if (!select || !select.value) return;
     var entry = catalogue[select.value];
     if (!entry) return;
     var parsed = parseInt(quantity ? quantity.value : "1", 10);
-    var line = findLine(entry.id);
-    if (line) {
-      line.quantity += parsed > 0 ? parsed : 1;
-    } else {
-      order.push({ id: entry.id, name: entry.name, quantity: parsed > 0 ? parsed : 1 });
-    }
+    var note = notes ? notes.value : "";
+    order.push({
+      lid: newLineId(),
+      id: entry.id,
+      name: entry.name,
+      quantity: parsed > 0 ? parsed : 1,
+      notes: note
+    });
   });
 
   // The plain rows have handed over their values; drop them so they cannot
@@ -630,6 +1222,14 @@ and their categories are rendered into the markup and filtered client-side.
     block.hidden = false;
   });
   form.classList.add("karaoke-order-enhanced");
+
+  // A rejected submission must not drop the waiter back on an empty step 1 as
+  // if nothing had happened: land where the problem is. A bad or missing
+  // comanda is step 1; anything else (oversell, no items) is step 2, with the
+  // error banner above the steps either way.
+  if (form.dataset.orderRejected) {
+    current = tabSelect.value ? 2 : 1;
+  }
 
   renderTabSelection();
   filterTabs();

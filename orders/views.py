@@ -2,17 +2,27 @@
 
 The order-taking page (``/pedidos/novo/``) is the app's central waiter flow.
 It renders a tab selector — plus an optional table, purely as delivery
-context — and a formset of item lines. On POST the whole submission runs
-inside a single transaction: the chosen tab is re-read under a row lock and
-must still be open, each requested quantity is validated against current stock
+context — and a formset of item lines, each carrying an optional free-text
+note for the kitchen (#229). On POST the whole submission runs inside a single
+transaction: the chosen tab is re-read under a row lock and must still be
+open, each requested quantity is validated against current stock
 before anything is written, the items' stock counts are decremented, and the
 order with its lines is created. If any single line exceeds stock the whole
 submission is rejected with a clear form error and nothing is changed.
 
 Since #225 the same view also hands the template the raw picker data — the
 open tabs, the sellable catalogue and its categories — so the touch UI can
-filter client-side without a second endpoint. The POST contract is unchanged:
-the picker is a layer over the very same form fields and formset.
+filter client-side without a second endpoint. Since #231 that page is a
+three-step wizard (comanda, itens, confirmação), but entirely on the client:
+the steps are sections of the same form, and the POST contract is unchanged —
+one form, one formset, one submission. The only thing the wizard needs from
+the server is ``submission_rejected``, so a refused POST comes back on the
+step where the problem is rather than on a blank step 1.
+
+Prices never reach the waiter's screen (#231): the catalogue is rendered
+without them and the order page shows no totals. ``OrderItem.unit_price`` is
+still snapshotted here — the till and the kitchen tickets need it, the waiter
+does not.
 
 Table occupancy is deliberately not touched here (#224): the table is now only
 a hint for the waiter, and ``tables.Table.status`` is owned by the tables
@@ -58,15 +68,20 @@ def _open_tabs():
 
 
 def _sellable_items():
-    """The sellable catalogue, alphabetically, with each item's category.
+    """The sellable catalogue, alphabetically, with each item's category and
+    note suggestions.
 
     Mirrors ``OrderItemLineForm.item``'s queryset: active items with stock
     above zero, nothing else. The category rides along so the client-side
-    chips can filter the rendered list without another request.
+    chips can filter the rendered list without another request. Since #232
+    the per-item note suggestions (#230) are prefetched in the same pass,
+    so the add-item dialog can render one-tap chips next to the notes box
+    without a second query per item.
     """
     return list(
         Item.objects.filter(is_active=True, stock__gt=0)
         .select_related("category")
+        .prefetch_related("note_suggestions")
         .order_by("name")
     )
 
@@ -99,6 +114,11 @@ class OrderCreateView(LoginRequiredMixin, View):
             "open_tabs": _open_tabs(),
             "sellable_items": _sellable_items(),
             "item_categories": _sellable_categories(),
+            # The wizard (#231) needs to know it is re-rendering a refusal, so
+            # it can seed itself on the step where the problem is instead of
+            # dropping the waiter on a blank step 1. Every rejection path here
+            # renders with a 4xx; a fresh page is the only 200.
+            "submission_rejected": status != 200,
         }
         return render(request, self.template_name, context, status=status)
 
@@ -119,8 +139,9 @@ class OrderCreateView(LoginRequiredMixin, View):
 
         # Collect non-empty lines (the formset always renders at least one
         # extra blank row; an empty item field means the waiter did not fill
-        # that line in).
-        lines: list[Tuple[Item, int]] = []
+        # that line in). The note rides along per line and is optional: a
+        # missing one is simply the empty string the model defaults to.
+        lines: list[Tuple[Item, int, str]] = []
         for line in formset.cleaned_data:
             if not line:
                 continue
@@ -128,7 +149,7 @@ class OrderCreateView(LoginRequiredMixin, View):
             quantity = line.get("quantity")
             if not item or not quantity:
                 continue
-            lines.append((item, quantity))
+            lines.append((item, quantity, line.get("notes") or ""))
 
         if not lines:
             return self._render(
@@ -140,7 +161,7 @@ class OrderCreateView(LoginRequiredMixin, View):
         # Aggregate quantities per item so a waiter entering the same item on
         # two lines still validates the combined demand against current stock.
         demanded: dict[int, int] = {}
-        for item, quantity in lines:
+        for item, quantity, _notes in lines:
             demanded[item.pk] = demanded.get(item.pk, 0) + quantity
 
         form_errors: list[str] = []
@@ -188,12 +209,13 @@ class OrderCreateView(LoginRequiredMixin, View):
                     table=table,
                     status=Order.Status.OPEN,
                 )
-                for item, quantity in lines:
+                for item, quantity, notes in lines:
                     OrderItem.objects.create(
                         order=order,
                         item=item,
                         quantity=quantity,
                         unit_price=items_by_pk[item.pk].price,
+                        notes=notes,
                     )
                     locked = items_by_pk[item.pk]
                     locked.stock -= quantity
