@@ -4,10 +4,11 @@ from io import StringIO
 
 from django.contrib.auth.models import User
 from django.core.management import call_command
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
 
-from inventory.models import Category, Item
+from inventory.models import Category, Item, NoteSuggestion
 
 
 class InventoryViewTests(TestCase):
@@ -366,7 +367,7 @@ class SeedDemoCommandTests(TestCase):
             with self.subTest(category=name):
                 self.assertGreater(Category.objects.get(name=name).items.count(), 0)
         self.assertGreaterEqual(Item.objects.count(), 12)
-        self.assertLessEqual(Item.objects.count(), 18)
+        self.assertLessEqual(Item.objects.count(), 20)
 
     def test_reuses_the_categories_from_migration_0003(self):
         """Rows already exist from the data migration; none may be duplicated."""
@@ -443,3 +444,250 @@ class SeedDemoCommandTests(TestCase):
         for name in ["bebidas não alcoólicas", "bebidas alcoólicas", "comidas"]:
             with self.subTest(category=name):
                 self.assertIn(name, body)
+
+
+class NoteSuggestionModelTests(TestCase):
+    """The NoteSuggestion model itself: ordering, uniqueness and cascade (#230)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.category = Category.objects.create(name="refrigerantes")
+        cls.coca = Item.objects.create(
+            name="Coca-Cola", category=cls.category, price=Decimal("8.00"), stock=20
+        )
+        cls.guarana = Item.objects.create(
+            name="Guaraná", category=cls.category, price=Decimal("8.00"), stock=20
+        )
+
+    def test_str_is_the_text(self):
+        suggestion = NoteSuggestion.objects.create(item=self.coca, text="gelo")
+        self.assertEqual(str(suggestion), "gelo")
+
+    def test_default_ordering_is_by_text(self):
+        NoteSuggestion.objects.create(item=self.coca, text="rodela de limão")
+        NoteSuggestion.objects.create(item=self.coca, text="gelo")
+        self.assertEqual(
+            list(self.coca.note_suggestions.values_list("text", flat=True)),
+            ["gelo", "rodela de limão"],
+        )
+
+    def test_same_text_allowed_on_two_different_items(self):
+        NoteSuggestion.objects.create(item=self.coca, text="gelo")
+        NoteSuggestion.objects.create(item=self.guarana, text="gelo")
+        self.assertEqual(NoteSuggestion.objects.filter(text="gelo").count(), 2)
+
+    def test_same_text_twice_on_one_item_is_refused(self):
+        NoteSuggestion.objects.create(item=self.coca, text="gelo")
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                NoteSuggestion.objects.create(item=self.coca, text="gelo")
+
+    def test_deleting_the_item_deletes_its_suggestions(self):
+        NoteSuggestion.objects.create(item=self.coca, text="gelo")
+        NoteSuggestion.objects.create(item=self.guarana, text="gelo")
+
+        self.coca.delete()
+
+        self.assertFalse(NoteSuggestion.objects.filter(item_id=self.coca.pk).exists())
+        # The other item's identically-named chip is untouched.
+        self.assertEqual(self.guarana.note_suggestions.count(), 1)
+
+
+class NoteSuggestionFormTests(TestCase):
+    """The textarea round-trip on the item create/edit screens (#230)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.category = Category.objects.create(name="refrigerantes")
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def post_item(self, url, name="Coca-Cola", suggestions=""):
+        return self.client.post(
+            url,
+            {
+                "name": name,
+                "category": self.category.pk,
+                "price": "8.00",
+                "stock": "20",
+                "is_active": "on",
+                "note_suggestions": suggestions,
+            },
+        )
+
+    def create_item(self, name="Coca-Cola", suggestions=""):
+        resp = self.post_item(
+            reverse("inventory:item-create"), name=name, suggestions=suggestions
+        )
+        self.assertEqual(resp.status_code, 302)
+        return Item.objects.get(name=name)
+
+    def texts(self, item):
+        return list(item.note_suggestions.values_list("text", flat=True))
+
+    def test_create_form_offers_the_textarea(self):
+        resp = self.client.get(reverse("inventory:item-create"))
+        self.assertContains(resp, "Sugestões de observação")
+        self.assertContains(resp, 'name="note_suggestions"')
+        self.assertContains(resp, "<textarea")
+
+    def test_create_with_suggestions_persists_them(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_create_without_suggestions_is_fine(self):
+        item = self.create_item(name="Água", suggestions="")
+        self.assertEqual(self.texts(item), [])
+
+    def test_edit_prefills_the_saved_suggestions_one_per_line(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        resp = self.client.get(reverse("inventory:item-update", args=[item.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.context["form"]["note_suggestions"].value(),
+            "gelo\nrodela de limão",
+        )
+        self.assertContains(resp, "gelo\nrodela de limão", html=False)
+
+    def test_edit_adds_a_line(self):
+        item = self.create_item(suggestions="gelo")
+        resp = self.post_item(
+            reverse("inventory:item-update", args=[item.pk]),
+            suggestions="gelo\nrodela de limão",
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_edit_removes_a_line(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        resp = self.post_item(
+            reverse("inventory:item-update", args=[item.pk]), suggestions="gelo"
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.texts(item), ["gelo"])
+
+    def test_edit_to_an_empty_textarea_clears_every_suggestion(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        resp = self.post_item(
+            reverse("inventory:item-update", args=[item.pk]), suggestions=""
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.texts(item), [])
+
+    def test_untouched_suggestion_keeps_its_row(self):
+        """Editing one line must not churn the PKs of the lines left alone."""
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        kept_pk = item.note_suggestions.get(text="gelo").pk
+        self.post_item(
+            reverse("inventory:item-update", args=[item.pk]),
+            suggestions="gelo\nsem canudo",
+        )
+        self.assertEqual(item.note_suggestions.get(text="gelo").pk, kept_pk)
+
+    def test_blank_lines_and_whitespace_are_ignored(self):
+        item = self.create_item(suggestions="\n  gelo  \n\n\t\nrodela de limão\n\n")
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_duplicate_lines_are_dropped_silently(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão\ngelo\n  gelo  ")
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_duplicate_lines_on_edit_do_not_error(self):
+        item = self.create_item(suggestions="gelo")
+        resp = self.post_item(
+            reverse("inventory:item-update", args=[item.pk]),
+            suggestions="gelo\ngelo\nrodela de limão",
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_carriage_returns_from_the_browser_are_handled(self):
+        """Real browsers post CRLF line breaks in a textarea."""
+        item = self.create_item(suggestions="gelo\r\nrodela de limão\r\n")
+        self.assertEqual(self.texts(item), ["gelo", "rodela de limão"])
+
+    def test_two_items_can_share_a_suggestion_text(self):
+        coca = self.create_item(name="Coca-Cola", suggestions="gelo\nrodela de limão")
+        guarana = self.create_item(name="Guaraná", suggestions="gelo\nrodela de laranja")
+        self.assertEqual(self.texts(coca), ["gelo", "rodela de limão"])
+        self.assertEqual(self.texts(guarana), ["gelo", "rodela de laranja"])
+
+    def test_overlong_suggestion_is_rejected_with_a_readable_message(self):
+        resp = self.post_item(
+            reverse("inventory:item-create"),
+            name="Comprida",
+            suggestions="x" * 101,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "no máximo 100 caracteres")
+        self.assertFalse(Item.objects.filter(name="Comprida").exists())
+
+    def test_a_failed_save_leaves_the_suggestions_alone(self):
+        """A rejected edit (negative price) must not half-apply the textarea."""
+        item = self.create_item(suggestions="gelo")
+        resp = self.client.post(
+            reverse("inventory:item-update", args=[item.pk]),
+            {
+                "name": "Coca-Cola",
+                "category": self.category.pk,
+                "price": "-1.00",
+                "stock": "20",
+                "is_active": "on",
+                "note_suggestions": "rodela de limão",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.texts(item), ["gelo"])
+        # What the user typed is still in the box so the fix is one edit away.
+        self.assertContains(resp, "rodela de limão")
+
+    def test_deleting_the_item_from_the_screen_deletes_its_suggestions(self):
+        item = self.create_item(suggestions="gelo\nrodela de limão")
+        suggestion_pks = list(item.note_suggestions.values_list("pk", flat=True))
+        self.assertEqual(len(suggestion_pks), 2)
+
+        resp = self.client.post(reverse("inventory:item-delete", args=[item.pk]))
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Item.objects.filter(pk=item.pk).exists())
+        self.assertFalse(NoteSuggestion.objects.filter(pk__in=suggestion_pks).exists())
+
+
+class NoteSuggestionSeedDemoTests(TestCase):
+    """``seed_demo`` ships the #230 chip examples and stays idempotent."""
+
+    def run_command(self):
+        out = StringIO()
+        call_command("seed_demo", stdout=out)
+        return out.getvalue()
+
+    def texts_for(self, item_name):
+        return list(
+            Item.objects.get(name__startswith=item_name)
+            .note_suggestions.values_list("text", flat=True)
+        )
+
+    def test_seeds_the_coca_cola_and_guarana_examples(self):
+        self.run_command()
+        self.assertEqual(self.texts_for("Coca-Cola"), ["gelo", "rodela de limão"])
+        self.assertEqual(self.texts_for("Guaraná"), ["gelo", "rodela de laranja"])
+
+    def test_the_shared_gelo_chip_exists_on_both_items(self):
+        self.run_command()
+        self.assertEqual(NoteSuggestion.objects.filter(text="gelo").count(), 2)
+
+    def test_second_invocation_creates_no_extra_suggestions(self):
+        self.run_command()
+        before = {(s.pk, s.item_id, s.text) for s in NoteSuggestion.objects.all()}
+        self.assertTrue(before)
+
+        self.run_command()
+
+        self.assertEqual(
+            {(s.pk, s.item_id, s.text) for s in NoteSuggestion.objects.all()}, before
+        )
+
+    def test_reports_the_suggestions_it_created(self):
+        self.assertIn("Sugestões de observação criadas:", self.run_command())

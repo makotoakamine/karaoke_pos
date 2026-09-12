@@ -67,7 +67,17 @@
                 </div>
               </div>
 
-              <div class="form-check form-switch mt-3">
+              {% comment %}Note suggestions are NoteSuggestion rows (#230), not a
+              model field: one per line here, synced on save. The add-item dialog
+              (#232) will render them as one-tap chips next to the notes box.{% endcomment %}
+              <div class="mb-3 mt-3{% if form.note_suggestions.errors %} karaoke-field-invalid{% endif %}">
+                <label for="{{ form.note_suggestions.id_for_label }}" class="form-label">{{ form.note_suggestions.label }}</label>
+                {{ form.note_suggestions }}
+                <div class="form-text">{{ form.note_suggestions.help_text|escape }}</div>
+                {% for error in form.note_suggestions.errors %}<div class="invalid-feedback d-block">{{ error|escape }}</div>{% endfor %}
+              </div>
+
+              <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" role="switch"
                        name="is_active" id="id_is_active"
                        {% if form.is_active.value %}checked{% endif %}>
