@@ -43,6 +43,9 @@
               <a class="nav-link" href="{% url 'inventory:item-list' %}">Estoque</a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="{% url 'core:config' %}">Configurações</a>
+            </li>
+            <li class="nav-item">
               <form method="post" action="{% url 'core:logout' %}" class="d-inline">
                 {% csrf_token %}
                 <button type="submit" class="btn btn-link nav-link ms-lg-2">Sair</button>

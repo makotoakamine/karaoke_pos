@@ -190,6 +190,15 @@ def build_kitchen_receipt(order) -> ReceiptBuilder:
     Prices are deliberately absent — the kitchen prepares food, the bill is the
     comanda's business — so ``OrderItem.unit_price`` never reaches the paper.
     Each line's note (#229) prints under its item, and only when there is one.
+
+    Since #237 each kitchen line is annotated when done: a prepared line
+    (``line.is_prepared`` True, the flag #236 adds to :class:`OrderItem`) is
+    prefixed ``[FEITO] `` on the ticket so the kitchen can see at a glance
+    which lines are already crossed off. The note still rides under the item
+    unchanged. Done lines stay on the ticket, marked — the line list, totals
+    and layout are otherwise untouched. If the ``is_prepared`` flag is absent
+    on a line (an older row or a plain object), every line is treated as not
+    prepared.
     """
     b = ReceiptBuilder()
     _header(b, order)
@@ -200,8 +209,14 @@ def build_kitchen_receipt(order) -> ReceiptBuilder:
 
     lines = list(order.items.all())
     for line in lines:
+        # The per-line "done" marker (#237): prefix the wrapped line with
+        # "[FEITO] " when the line is prepared. ``getattr`` with a default of
+        # False keeps this safe for callers that hand in a plain object or a
+        # row from before the flag existed.
+        is_prepared = getattr(line, "is_prepared", False)
+        prefix = "[FEITO] " if is_prepared else ""
         b.raw(SIZE_TALL + BOLD_ON)
-        b.wrapped(f"{line.quantity}x {line.item.name}")
+        b.wrapped(f"{prefix}{line.quantity}x {line.item.name}")
         b.raw(SIZE_NORMAL + BOLD_OFF)
         # The waiter's note for this line (#229), in normal size and indented
         # under the item so it reads as belonging to it and never competes

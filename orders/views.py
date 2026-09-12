@@ -39,8 +39,23 @@ screens alone.
 
 The kitchen screen (#110) also prints (#228): :class:`OrderPrintView` renders an
 order as an ESC/POS kitchen ticket and hands it to the thermal printer. It is a
-read-only action on the order — printing never changes the status.
+read-only action on the order's *status* — printing never changes the status.
+Since #237 the print view also reconciles ``Order.auto_print_failed``: a
+successful manual print clears the flag (so the red notice leaves the kitchen
+card) and a failed one sets it.
+
+Since #237 the order page can also auto-print: when the singleton site
+configuration (:class:`core.models.Configuracao`) has
+``auto_print_on_kitchen_arrival`` on, :class:`OrderCreateView.post` schedules
+:func:`_auto_print_kitchen_ticket` via :func:`transaction.on_commit` so the
+kitchen ticket is sent to the printer once the order's transaction commits —
+never while the stock-validation row locks are still held. Orders with no
+kitchen-prep lines never auto-print. A printer failure does not break the
+waiter's flow (the redirect already happened by the time the callback runs);
+the failure is recorded as ``Order.auto_print_failed`` and the kitchen surface
+owns the display.
 """
+import logging
 from typing import Iterable, Tuple
 
 from django.contrib import messages
@@ -60,6 +75,8 @@ from .forms import OrderForm, OrderItemLineFormSet
 from .models import Order, OrderItem
 from .services.printer import PrinterError, print_raw
 from .services.receipts import kitchen_receipt_bytes
+
+logger = logging.getLogger(__name__)
 
 
 def _open_tabs():
@@ -107,6 +124,48 @@ def _sellable_categories():
         .distinct()
         .order_by("name")
     )
+
+
+def _auto_print_kitchen_ticket(order_pk: int) -> None:
+    """Send the kitchen ticket for ``order_pk`` to the printer, if configured.
+
+    Called via :func:`transaction.on_commit` from :class:`OrderCreateView.post`
+    after the order is committed, so the stock-validation row locks are long
+    released by the time the printer is reached. The site configuration is read
+    fresh here (not captured in the view) so flipping the toggle between the
+    order's POST and the callback is honored — the on-commit callback is the
+    single source of truth for "should this order auto-print?".
+
+    Records the attempt outcome on the order: ``auto_print_failed=True`` on
+    :class:`PrinterError`, ``False`` on success. Never raises: a printer
+    failure must not break the waiter's flow (the redirect already happened)
+    and the kitchen surface owns the failure display.
+    """
+    from core.models import get_config
+
+    config = get_config()
+    if not config.auto_print_on_kitchen_arrival:
+        return
+
+    order = (
+        Order.objects.select_related("tab", "table")
+        .prefetch_related(_kitchen_items_prefetch())
+        .filter(pk=order_pk)
+        .first()
+    )
+    if order is None:
+        return
+
+    payload = kitchen_receipt_bytes(order)
+    try:
+        print_raw(payload, label=f"pedido-{order.pk}-cozinha-auto")
+    except PrinterError as exc:
+        logger.error(
+            "Falha na impressão automática do pedido #%s: %s", order.pk, exc
+        )
+        Order.objects.filter(pk=order.pk).update(auto_print_failed=True)
+    else:
+        Order.objects.filter(pk=order.pk).update(auto_print_failed=False)
 
 
 class OrderCreateView(LoginRequiredMixin, View):
@@ -242,6 +301,24 @@ class OrderCreateView(LoginRequiredMixin, View):
                     locked = items_by_pk[item.pk]
                     locked.stock -= quantity
                     locked.save(update_fields=["stock", "updated_at"])
+
+                # Auto-print (#237): if the site config has
+                # ``auto_print_on_kitchen_arrival`` on AND the order has at
+                # least one kitchen-prep line (``needs_kitchen``), compose the
+                # kitchen ticket and send it to the printer once the
+                # transaction commits. The callback fires *after* the atomic
+                # block, so the row locks taken for stock validation are long
+                # gone by the time the printer is reached. Orders with no prep
+                # lines NEVER auto-print. A printer failure does not break the
+                # waiter's flow: the redirect already happened by the time the
+                # callback runs, and the failure is recorded on the order as
+                # ``auto_print_failed`` so the kitchen surface owns the
+                # display.
+                if needs_kitchen:
+                    order_pk = order.pk
+                    transaction.on_commit(
+                        lambda: _auto_print_kitchen_ticket(order_pk)
+                    )
         except Tab.DoesNotExist:
             order_form.add_error("tab", _("Comanda inválida ou já fechada."))
             return self._render(request, order_form, formset, status=400)
@@ -367,9 +444,13 @@ class OrderPrintView(LoginRequiredMixin, View):
     which either reaches the hardware or — with ``KARAOKE_PRINTER_DRY_RUN=1`` —
     dumps the ticket to disk so the flow can be exercised without a printer.
 
-    Printing is deliberately read-only with respect to the order: the status is
-    never touched, so re-printing a lost ticket does not take the card off the
-    kitchen screen. Only "Pronto" does that.
+    Printing is deliberately read-only with respect to the order's *status*:
+    the status is never touched, so re-printing a lost ticket does not take the
+    card off the kitchen screen. Only "Pronto" does that. The
+    ``auto_print_failed`` flag, however, *is* reconciled here — a successful
+    manual print clears it (so the red notice leaves the kitchen card) and a
+    failed manual print sets it (so the notice appears/stays). That way manual
+    reprint and any later auto-print agree on the flag.
 
     Replies in JSON so the kitchen JavaScript can show the outcome inline:
     ``200`` with the printer's message on success, ``503`` with the error text
@@ -391,10 +472,19 @@ class OrderPrintView(LoginRequiredMixin, View):
         try:
             result = print_raw(payload, label=f"pedido-{order.pk}-cozinha")
         except PrinterError as exc:
+            # Reconcile the auto-print failure flag: a failed manual reprint
+            # also marks the order, so the kitchen card's red notice appears
+            # or stays until a later print (manual or automatic) succeeds.
+            if order.auto_print_failed is not True:
+                Order.objects.filter(pk=order.pk).update(auto_print_failed=True)
             # 503: the app is fine, the printer is not. The UI shows this text
             # verbatim so whoever is at the pass knows what to check.
             return JsonResponse({"success": False, "error": str(exc)}, status=503)
 
+        # Success: clear the auto-print failure flag so the red notice leaves
+        # the kitchen card on the next polling refresh.
+        if order.auto_print_failed:
+            Order.objects.filter(pk=order.pk).update(auto_print_failed=False)
         return JsonResponse(
             {
                 "success": True,

@@ -1251,3 +1251,27 @@ h1, h2, h3, h4, h5, h6,
   padding: .6rem .75rem;
   font-size: .85rem;
 }
+
+// Persistent auto-print failure notice on a kitchen card (#237). Unlike the
+// transient .kitchen-print-notice (cleared by the polling JS after a few
+// seconds), this one comes from the model's ``auto_print_failed`` flag and so
+// survives the 5-second polling refresh. It clears only when a successful
+// print (manual or automatic) flips the flag back to False.
+.kitchen-auto-print-failed {
+  margin: .6rem 0 0;
+  padding: .45rem .6rem;
+  border-radius: .25rem;
+  background: rgba($danger, .2);
+  color: #{tint-color($danger, 30%)};
+  font-size: .85rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+// Config page (#237): same dark card styling the other staff pages use.
+.karaoke-config {
+  .karaoke-actions {
+    margin-top: 1.25rem;
+  }
+}

@@ -9,5 +9,6 @@ app_name = "core"
 urlpatterns = [
     path("", views.LandingLoginView.as_view(), name="login"),
     path("home/", views.HomeView.as_view(), name="home"),
+    path("configuracao/", views.ConfigView.as_view(), name="config"),
     path("logout/", LogoutView.as_view(), name="logout"),
 ]
