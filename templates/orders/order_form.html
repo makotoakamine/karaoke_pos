@@ -152,6 +152,7 @@ and their categories are rendered into the markup and filtered client-side.
                         <tr>
                           <th scope="col">{% trans "Item" %}</th>
                           <th scope="col" class="karaoke-line-qty">{% trans "Quantidade" %}</th>
+                          <th scope="col">{% trans "Observação" %}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -166,6 +167,15 @@ and their categories are rendered into the markup and filtered client-side.
                             <td class="karaoke-line-qty {% if line.quantity.errors %}karaoke-field-invalid{% endif %}">
                               {{ line.quantity }}
                               {% for error in line.quantity.errors %}
+                                <div class="invalid-feedback d-block">{{ error|escape }}</div>
+                              {% endfor %}
+                            </td>
+                            {% comment %}The line's note for the kitchen (#229) —
+                            always optional, so it carries no required marker and
+                            an empty one submits exactly as before.{% endcomment %}
+                            <td class="{% if line.notes.errors %}karaoke-field-invalid{% endif %}">
+                              {{ line.notes }}
+                              {% for error in line.notes.errors %}
                                 <div class="invalid-feedback d-block">{{ error|escape }}</div>
                               {% endfor %}
                             </td>
@@ -228,7 +238,8 @@ and their categories are rendered into the markup and filtered client-side.
               </fieldset>
 
               {% comment %}Resumo: what is on the order, with per-line quantity
-              controls, a remove action and a running total.{% endcomment %}
+              controls, a per-line note for the kitchen (#229), a remove action
+              and a running total.{% endcomment %}
               <fieldset class="karaoke-order-block" data-order-picker hidden>
                 <legend class="karaoke-legend mb-3">{% trans "Resumo do pedido" %}</legend>
 
@@ -277,6 +288,8 @@ and their categories are rendered into the markup and filtered client-side.
 {% trans "Quantidade" as text_qty %}
 {% trans "acima do estoque" as text_over %}
 {% trans "em estoque" as text_stock %}
+{% trans "Observação" as text_note %}
+{% trans "Observação (ex.: com gelo e limão)" as text_note_hint %}
 <script>
 (function () {
   "use strict";
@@ -290,7 +303,9 @@ and their categories are rendered into the markup and filtered client-side.
     more: "{{ text_more|escapejs }}",
     qty: "{{ text_qty|escapejs }}",
     over: "{{ text_over|escapejs }}",
-    stock: "{{ text_stock|escapejs }}"
+    stock: "{{ text_stock|escapejs }}",
+    note: "{{ text_note|escapejs }}",
+    noteHint: "{{ text_note_hint|escapejs }}"
   };
 
   // --- helpers -------------------------------------------------------------
@@ -403,6 +418,28 @@ and their categories are rendered into the markup and filtered client-side.
 
       row.appendChild(label);
 
+      // The line's note for the kitchen (#229). Deliberately a plain text
+      // input right on the summary row: the full quantity/notes dialog with
+      // suggestion chips is #232 and will replace this control, so there is
+      // no modal to build here. It is a UI-only field — `writeFormset` is
+      // what mirrors its value into the real `lines-N-notes` input.
+      var note = document.createElement("input");
+      note.type = "text";
+      note.className = "form-control karaoke-note-input";
+      note.maxLength = 200;
+      note.value = line.notes || "";
+      note.placeholder = TEXT.noteHint;
+      note.autocomplete = "off";
+      note.setAttribute("aria-label", TEXT.note + " — " + line.name);
+      // Only the hidden inputs are rewritten on input, never the summary:
+      // re-rendering the row here would pull the caret out from under the
+      // waiter's finger on every keystroke.
+      note.addEventListener("input", function () {
+        line.notes = note.value;
+        writeFormset();
+      });
+      row.appendChild(note);
+
       var controls = document.createElement("div");
       controls.className = "karaoke-summary-controls";
 
@@ -484,6 +521,12 @@ and their categories are rendered into the markup and filtered client-side.
       quantity.name = "lines-" + index + "-quantity";
       quantity.value = String(line.quantity);
       lineInputs.appendChild(quantity);
+
+      var notes = document.createElement("input");
+      notes.type = "hidden";
+      notes.name = "lines-" + index + "-notes";
+      notes.value = line.notes || "";
+      lineInputs.appendChild(notes);
     });
     totalForms.value = String(order.length);
   }
@@ -495,7 +538,7 @@ and their categories are rendered into the markup and filtered client-side.
     if (line) {
       line.quantity += 1;
     } else {
-      order.push({ id: itemId, name: entry.name, quantity: 1 });
+      order.push({ id: itemId, name: entry.name, quantity: 1, notes: "" });
     }
     renderSummary();
   }
@@ -606,15 +649,25 @@ and their categories are rendered into the markup and filtered client-side.
   Array.prototype.forEach.call(lineRows, function (row) {
     var select = row.querySelector("select");
     var quantity = row.querySelector("input[type=number]");
+    var notes = row.querySelector("input[name$='-notes']");
     if (!select || !select.value) return;
     var entry = catalogue[select.value];
     if (!entry) return;
     var parsed = parseInt(quantity ? quantity.value : "1", 10);
+    var note = notes ? notes.value : "";
     var line = findLine(entry.id);
     if (line) {
       line.quantity += parsed > 0 ? parsed : 1;
+      // The picker keeps one line per item, so two rejected rows for the same
+      // item collapse into one: keep the first note rather than losing it.
+      if (!line.notes) line.notes = note;
     } else {
-      order.push({ id: entry.id, name: entry.name, quantity: parsed > 0 ? parsed : 1 });
+      order.push({
+        id: entry.id,
+        name: entry.name,
+        quantity: parsed > 0 ? parsed : 1,
+        notes: note
+      });
     }
   });
 

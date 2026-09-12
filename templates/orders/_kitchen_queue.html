@@ -27,11 +27,19 @@
                 &middot; {{ order.created_at|date:"H:i" }}
               </p>
 
+              {% comment %}The waiter's note (#229) hangs under its item, and
+              only when the line actually has one — a line without a note is
+              the normal case and must not grow an empty row.{% endcomment %}
               <ul class="kitchen-lines">
                 {% for line in order.items.all %}
                   <li>
-                    <span class="fw-semibold">{{ line.item.name|escape }}</span>
-                    <span class="badge bg-secondary">{{ line.quantity }}x</span>
+                    <div class="kitchen-line-main">
+                      <span class="fw-semibold">{{ line.item.name|escape }}</span>
+                      <span class="badge bg-secondary">{{ line.quantity }}x</span>
+                    </div>
+                    {% if line.notes %}
+                      <p class="kitchen-line-note">{{ line.notes|escape }}</p>
+                    {% endif %}
                   </li>
                 {% endfor %}
               </ul>

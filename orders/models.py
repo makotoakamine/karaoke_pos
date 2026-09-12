@@ -89,6 +89,12 @@ class OrderItem(models.Model):
     price edits in the inventory app never rewrite historical orders. The
     ``quantity`` is a positive integer validated at submission time against
     current stock before anything is written.
+
+    ``notes`` (#229) is the waiter's free-text request for *this* line — "com
+    gelo e limão", "sem cebola" — and travels with the item all the way to the
+    kitchen screen and the printed ticket. A line without a note is the normal
+    case, so the field is blank with an empty default and never ``NULL``: every
+    reader can treat it as a plain string.
     """
 
     order = models.ForeignKey(
@@ -114,6 +120,13 @@ class OrderItem(models.Model):
         decimal_places=2,
         validators=[MinValueValidator(0)],
         help_text="Preço unitário do item no momento do pedido (snapshot, não muda).",
+    )
+    notes = models.CharField(
+        "observações",
+        max_length=200,
+        blank=True,
+        default="",
+        help_text='Pedido especial do cliente para esta linha ("com gelo e limão").',
     )
 
     class Meta:

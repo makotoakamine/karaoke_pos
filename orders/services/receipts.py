@@ -1,8 +1,9 @@
 """Composition of the receipt content (ESC/POS).
 
 Only the **kitchen** ticket is produced here: no prices, just the comanda it
-belongs to, where to deliver it and the items to prepare. The customer/bill
-receipt is a separate concern that the close-flow will own.
+belongs to, where to deliver it and the items to prepare — each with the
+waiter's note for that line, when it has one. The customer/bill receipt is a
+separate concern that the close-flow will own.
 
 The text is normalized to ASCII because thermal printers typically use DOS code
 pages (CP437/CP850), where accented characters come out wrong.
@@ -188,6 +189,7 @@ def build_kitchen_receipt(order) -> ReceiptBuilder:
 
     Prices are deliberately absent — the kitchen prepares food, the bill is the
     comanda's business — so ``OrderItem.unit_price`` never reaches the paper.
+    Each line's note (#229) prints under its item, and only when there is one.
     """
     b = ReceiptBuilder()
     _header(b, order)
@@ -201,6 +203,13 @@ def build_kitchen_receipt(order) -> ReceiptBuilder:
         b.raw(SIZE_TALL + BOLD_ON)
         b.wrapped(f"{line.quantity}x {line.item.name}")
         b.raw(SIZE_NORMAL + BOLD_OFF)
+        # The waiter's note for this line (#229), in normal size and indented
+        # under the item so it reads as belonging to it and never competes
+        # with the item name for the cook's eye. `wrapped` does the work: it
+        # normalizes the accents ("com gelo e limao") and folds a long request
+        # over as many lines as the paper needs instead of truncating it.
+        if line.notes:
+            b.wrapped(f"- {line.notes}", indent="   ")
         b.blank()
 
     b.rule()

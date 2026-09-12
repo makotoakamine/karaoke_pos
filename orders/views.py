@@ -2,9 +2,10 @@
 
 The order-taking page (``/pedidos/novo/``) is the app's central waiter flow.
 It renders a tab selector — plus an optional table, purely as delivery
-context — and a formset of item lines. On POST the whole submission runs
-inside a single transaction: the chosen tab is re-read under a row lock and
-must still be open, each requested quantity is validated against current stock
+context — and a formset of item lines, each carrying an optional free-text
+note for the kitchen (#229). On POST the whole submission runs inside a single
+transaction: the chosen tab is re-read under a row lock and must still be
+open, each requested quantity is validated against current stock
 before anything is written, the items' stock counts are decremented, and the
 order with its lines is created. If any single line exceeds stock the whole
 submission is rejected with a clear form error and nothing is changed.
@@ -119,8 +120,9 @@ class OrderCreateView(LoginRequiredMixin, View):
 
         # Collect non-empty lines (the formset always renders at least one
         # extra blank row; an empty item field means the waiter did not fill
-        # that line in).
-        lines: list[Tuple[Item, int]] = []
+        # that line in). The note rides along per line and is optional: a
+        # missing one is simply the empty string the model defaults to.
+        lines: list[Tuple[Item, int, str]] = []
         for line in formset.cleaned_data:
             if not line:
                 continue
@@ -128,7 +130,7 @@ class OrderCreateView(LoginRequiredMixin, View):
             quantity = line.get("quantity")
             if not item or not quantity:
                 continue
-            lines.append((item, quantity))
+            lines.append((item, quantity, line.get("notes") or ""))
 
         if not lines:
             return self._render(
@@ -140,7 +142,7 @@ class OrderCreateView(LoginRequiredMixin, View):
         # Aggregate quantities per item so a waiter entering the same item on
         # two lines still validates the combined demand against current stock.
         demanded: dict[int, int] = {}
-        for item, quantity in lines:
+        for item, quantity, _notes in lines:
             demanded[item.pk] = demanded.get(item.pk, 0) + quantity
 
         form_errors: list[str] = []
@@ -188,12 +190,13 @@ class OrderCreateView(LoginRequiredMixin, View):
                     table=table,
                     status=Order.Status.OPEN,
                 )
-                for item, quantity in lines:
+                for item, quantity, notes in lines:
                     OrderItem.objects.create(
                         order=order,
                         item=item,
                         quantity=quantity,
                         unit_price=items_by_pk[item.pk].price,
+                        notes=notes,
                     )
                     locked = items_by_pk[item.pk]
                     locked.stock -= quantity
