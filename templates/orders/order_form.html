@@ -241,7 +241,7 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
                     <ul class="karaoke-summary" id="order-summary"></ul>
 
                     <p class="karaoke-empty mb-0" id="order-summary-empty">
-                      {% trans "Nenhum item no pedido ainda. Toque em um item abaixo para adicioná-lo." %}
+                      {% trans "Nenhum item no pedido ainda. Toque em “Adicionar item” para começar." %}
                     </p>
 
                     {# The picker writes the formset's hidden inputs in here. #}
@@ -249,57 +249,20 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
                   </div>
                 </fieldset>
 
-                {% comment %}Adicionar item: category chips + name search over the
-                sellable catalogue, filtered client-side over the rendered data.
-                Self-contained on purpose — see #232.{% endcomment %}
-                <fieldset class="karaoke-order-block" id="add-item-surface" data-order-picker hidden>
-                  <legend class="karaoke-legend mb-3">{% trans "Adicionar item" %}</legend>
-
-                  {% comment %}Chips scroll sideways on a narrow phone rather than
-                  wrapping into a wall of buttons; "Todos" is how you get back to
-                  the whole catalogue.{% endcomment %}
-                  <div class="karaoke-chip-row" id="category-chips" role="group"
-                       aria-label="{% trans 'Filtrar por categoria' %}">
-                    <button type="button" class="karaoke-filter-chip is-on"
-                            data-category="all" aria-pressed="true">{% trans "Todos" %}</button>
-                    {% for category in item_categories %}
-                      <button type="button" class="karaoke-filter-chip"
-                              data-category="{{ category.pk }}"
-                              aria-pressed="false">{{ category.name|escape }}</button>
-                    {% endfor %}
-                  </div>
-
-                  <label for="item-search" class="form-label mt-3">{% trans "Buscar item" %}</label>
-                  <input type="search" id="item-search" class="form-control form-control-lg karaoke-search"
-                         autocomplete="off"
-                         placeholder="{% trans 'Digite parte do nome…' %}"
-                         aria-controls="item-picker">
-
-                  <div class="karaoke-pick-grid mt-3" id="item-picker" role="group"
-                       aria-label="{% trans 'Itens disponíveis' %}">
-                    {% for item in sellable_items %}
-                      <button type="button" class="karaoke-pick"
-                              data-item-id="{{ item.pk }}"
-                              data-item-name="{{ item.name }}"
-                              data-item-stock="{{ item.stock }}"
-                              data-item-category="{{ item.category_id }}">
-                        <span class="karaoke-pick-name">{{ item.name|escape }}</span>
-                        <span class="karaoke-pick-meta karaoke-micro">{{ item.category.name|escape }}</span>
-                        <span class="karaoke-pick-count" data-pick-count hidden></span>
-                      </button>
-                    {% endfor %}
-                  </div>
-
-                  {% if not sellable_items %}
-                    <p class="karaoke-empty mb-0" data-item-none>
-                      {% trans "Nenhum item disponível para venda no momento." %}
-                    </p>
-                  {% else %}
-                    <p class="karaoke-empty mb-0" data-item-empty hidden>
-                      {% trans "Nenhum item encontrado com esse filtro." %}
-                    </p>
-                  {% endif %}
-                </fieldset>
+                  {% comment %}Adicionar item: a single button that opens the
+                full-screen picker modal (#232). The category strip, the name
+                search and the item grid all live inside that modal — step 2's
+                order list no longer offers inline item picking. The same
+                catalogue is rendered for real inside the modal, so the no-JS
+                plain-formset path above is the only thing the server actually
+                needs.{% endcomment %}
+                <div class="karaoke-order-block karaoke-add-item-row" data-order-picker hidden>
+                  <button type="button" class="btn btn-primary karaoke-add-item-btn"
+                          data-bs-toggle="modal"
+                          data-bs-target="#add-item-modal">
+                    {% trans "Adicionar item" %}
+                  </button>
+                </div>
               </div>
 
               {% comment %}=== Step 3 — Confirmação ==========================
@@ -340,6 +303,158 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
                           data-wizard-back hidden>{% trans "Voltar" %}</button>
                   <button type="button" class="btn btn-primary" data-wizard-next>{% trans "Avançar" %}</button>
                   <button type="submit" class="btn btn-primary" data-wizard-submit hidden>{% trans "Registrar pedido" %}</button>
+                </div>
+              </div>
+
+              {% comment %}=== Add-item modal (#232) =========================
+              A full-screen Bootstrap modal: a horizontally scrollable category
+              strip pinned at the top (one chip per sellable category plus
+              "Todos"), a text filter below it, and the list of sellable items
+              matching both. Tapping an item opens the quantity/notes dialog.
+              The modal carries the real catalogue data — no second endpoint,
+              no JSON — and is a layer only: nothing here posts by itself, the
+              script writes the chosen lines into the hidden formset inputs
+              above. With scripting off the modal markup is inert and the plain
+              formset rows above are what the waiter submits.
+              No price anywhere — the waiter counts things, the till does money.
+              {% endcomment %}
+              <div class="modal fade karaoke-modal karaoke-add-item-modal" id="add-item-modal"
+                   tabindex="-1" aria-labelledby="add-item-modal-title" aria-hidden="true"
+                   data-order-picker hidden>
+                <div class="modal-dialog modal-fullscreen" role="dialog" aria-modal="true">
+                  <div class="modal-content">
+                    <div class="modal-header">
+                      <h2 class="modal-title h5 mb-0" id="add-item-modal-title">{% trans "Adicionar item" %}</h2>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal"
+                              aria-label="{% trans 'Fechar' %}"></button>
+                    </div>
+
+                    {% comment %}The category strip is pinned at the top of the
+                    modal body: it stays put while the item list scrolls under
+                    it. "Todos" is active by default.{% endcomment %}
+                    <div class="modal-body karaoke-modal-body p-0">
+                      <div class="karaoke-modal-sticky">
+                        <div class="karaoke-chip-row karaoke-modal-chips" id="category-chips"
+                             role="group" aria-label="{% trans 'Filtrar por categoria' %}">
+                          <button type="button" class="karaoke-filter-chip is-on"
+                                  data-category="all" aria-pressed="true">{% trans "Todos" %}</button>
+                          {% for category in item_categories %}
+                            <button type="button" class="karaoke-filter-chip"
+                                    data-category="{{ category.pk }}"
+                                    aria-pressed="false">{{ category.name|escape }}</button>
+                          {% endfor %}
+                        </div>
+
+                        <div class="karaoke-modal-search">
+                          <label for="item-search" class="form-label visually-hidden">{% trans "Buscar item" %}</label>
+                          <input type="search" id="item-search"
+                                 class="form-control form-control-lg karaoke-search"
+                                 autocomplete="off"
+                                 placeholder="{% trans 'Digite parte do nome…' %}"
+                                 aria-controls="item-picker">
+                        </div>
+                      </div>
+
+                      <div class="karaoke-modal-scroll">
+                        <div class="karaoke-pick-grid" id="item-picker" role="group"
+                             aria-label="{% trans 'Itens disponíveis' %}">
+                          {% for item in sellable_items %}
+                            {% with suggestions=item.note_suggestions.all %}
+                            <button type="button" class="karaoke-pick"
+                                    data-item-id="{{ item.pk }}"
+                                    data-item-name="{{ item.name }}"
+                                    data-item-stock="{{ item.stock }}"
+                                    data-item-category="{{ item.category_id }}"
+                                    data-item-suggestions="{% for s in suggestions %}{{ s.text|escapejs }}{% if not forloop.last %}||{% endif %}{% endfor %}">
+                              <span class="karaoke-pick-name">{{ item.name|escape }}</span>
+                              <span class="karaoke-pick-meta karaoke-micro">{{ item.category.name|escape }}</span>
+                              <span class="karaoke-pick-count" data-pick-count hidden></span>
+                            </button>
+                            {% endwith %}
+                          {% endfor %}
+                        </div>
+
+                        {% if not sellable_items %}
+                          <p class="karaoke-empty m-3" data-item-none>
+                            {% trans "Nenhum item disponível para venda no momento." %}
+                          </p>
+                        {% else %}
+                          <p class="karaoke-empty m-3" data-item-empty hidden>
+                            {% trans "Nenhum item encontrado com esse filtro." %}
+                          </p>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {% comment %}=== Quantity / notes dialog (#232) =================
+              A second, smaller Bootstrap modal opened from the add-item modal.
+              Asks for the quantity (default 1, minimum 1, capped at the item's
+              current stock) and an optional free-text note. Next to the notes
+              field the item's suggestion chips from #230 are rendered as
+              data on the chosen item and cloned in here by the script —
+              tapping a chip inserts its text into the notes field. Items
+              without suggestions simply show no chip row. Confirming closes
+              both layers and appends the line to step 2's order list; the
+              same item may be added again as a separate line (e.g. with
+              different notes), so nothing here de-duplicates.
+              No price here either.
+              {% endcomment %}
+              <div class="modal fade karaoke-modal karaoke-line-dialog" id="line-dialog"
+                   tabindex="-1" aria-labelledby="line-dialog-title" aria-hidden="true"
+                   data-order-picker hidden>
+                <div class="modal-dialog modal-dialog-centered" role="dialog" aria-modal="true">
+                  <div class="modal-content">
+                    <div class="modal-header">
+                      <h2 class="modal-title h5 mb-0" id="line-dialog-title"></h2>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal"
+                              aria-label="{% trans 'Fechar' %}"></button>
+                    </div>
+                    <div class="modal-body">
+                      <div class="mb-3">
+                        <label for="line-dialog-qty" class="form-label">{% trans "Quantidade" %}</label>
+                        <div class="karaoke-qty karaoke-qty-dialog" id="line-dialog-qty-stepper">
+                          <button type="button" class="karaoke-qty-btn" id="line-dialog-qty-less"
+                                  aria-label="{% trans 'Diminuir quantidade' %}">&minus;</button>
+                          <input type="number" id="line-dialog-qty"
+                                 class="form-control karaoke-qty-input"
+                                 min="1" value="1" inputmode="numeric">
+                          <button type="button" class="karaoke-qty-btn" id="line-dialog-qty-more"
+                                  aria-label="{% trans 'Aumentar quantidade' %}">+</button>
+                        </div>
+                        <p class="form-text karaoke-micro mt-2 mb-0" id="line-dialog-stock-hint"
+                           hidden></p>
+                      </div>
+
+                      <div class="mb-3">
+                        <label for="line-dialog-notes" class="form-label">{% trans "Observação" %}</label>
+                        <input type="text" id="line-dialog-notes"
+                               class="form-control"
+                               maxlength="200" autocomplete="off"
+                               placeholder="{% trans 'Observação (ex.: com gelo e limão)' %}">
+                      </div>
+
+                      {% comment %}The suggestion chips for the picked item. The
+                      script rebuilds this row per item from the data carried on
+                      each catalogue button, so the row is empty until an item
+                      is tapped and items without suggestions show no chips.{% endcomment %}
+                      <div class="karaoke-chip-row karaoke-suggestion-chips"
+                           id="line-dialog-suggestions" role="group"
+                           aria-label="{% trans 'Sugestões de observação' %}"></div>
+                      <p class="karaoke-empty karaoke-suggestions-empty mb-0" id="line-dialog-no-suggestions" hidden>
+                        {% trans "Nenhuma sugestão cadastrada para este item." %}
+                      </p>
+                    </div>
+                    <div class="modal-footer">
+                      <button type="button" class="btn btn-outline-secondary karaoke-btn-ghost"
+                              data-bs-dismiss="modal">{% trans "Cancelar" %}</button>
+                      <button type="button" class="btn btn-primary" id="line-dialog-confirm">
+                        {% trans "Confirmar" %}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </form>
@@ -429,22 +544,51 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
   );
   var catalogue = {};
   itemButtons.forEach(function (button) {
+    // Suggestions ride on a `||`-joined data attribute (#230 → #232): the
+    // dialog clones them into chips next to the notes field. An item with no
+    // suggestions simply yields an empty array, which renders no chip row.
+    var raw = button.dataset.itemSuggestions || "";
+    var suggestions = raw
+      .split("||")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
     catalogue[button.dataset.itemId] = {
       id: button.dataset.itemId,
       name: button.dataset.itemName,
       stock: parseInt(button.dataset.itemStock, 10) || 0,
+      suggestions: suggestions,
       button: button
     };
   });
 
-  // Lines currently on the order, in the order they were tapped.
+  // Lines currently on the order, in the order they were tapped. Since #232
+  // the same item may appear on more than one line (e.g. with different
+  // notes), so a line is keyed by a generated `lid` — not by its item id.
   var order = [];
+  var lineSeq = 0;
 
-  function findLine(itemId) {
+  function newLineId() {
+    lineSeq += 1;
+    return "l" + String(lineSeq);
+  }
+
+  function findLine(lid) {
     for (var i = 0; i < order.length; i++) {
-      if (order[i].id === itemId) return order[i];
+      if (order[i].lid === lid) return order[i];
     }
     return null;
+  }
+
+  // Total quantity already on the order for a given item, across every line
+  // that references it — used to badge the catalogue buttons and to cap the
+  // quantity dialog. The server still aggregates demand per item against
+  // stock, so this is the client-side mirror of the same check.
+  function quantityForItem(itemId) {
+    var total = 0;
+    order.forEach(function (line) {
+      if (line.id === itemId) total += line.quantity;
+    });
+    return total;
   }
 
   // --- the order summary ----------------------------------------------------
@@ -468,6 +612,7 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
 
       var row = document.createElement("li");
       row.className = "karaoke-summary-line";
+      row.dataset.lid = line.lid;
 
       var label = document.createElement("div");
       label.className = "karaoke-summary-label";
@@ -486,29 +631,17 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
         label.appendChild(warning);
       }
 
-      row.appendChild(label);
+      // The note set in the add-item dialog (#232), shown read-only on the
+      // summary. Editing a line's note means removing it and adding the item
+      // again — the dialog is the only entry point for notes now.
+      if (line.notes) {
+        var noteOut = document.createElement("span");
+        noteOut.className = "karaoke-summary-note";
+        noteOut.textContent = line.notes;
+        label.appendChild(noteOut);
+      }
 
-      // The line's note for the kitchen (#229). Deliberately a plain text
-      // input right on the summary row: the full quantity/notes dialog with
-      // suggestion chips is #232 and will replace this control, so there is
-      // no modal to build here. It is a UI-only field — `writeFormset` is
-      // what mirrors its value into the real `lines-N-notes` input.
-      var note = document.createElement("input");
-      note.type = "text";
-      note.className = "form-control karaoke-note-input";
-      note.maxLength = 200;
-      note.value = line.notes || "";
-      note.placeholder = TEXT.noteHint;
-      note.autocomplete = "off";
-      note.setAttribute("aria-label", TEXT.note + " — " + line.name);
-      // Only the hidden inputs are rewritten on input, never the summary:
-      // re-rendering the row here would pull the caret out from under the
-      // waiter's finger on every keystroke.
-      note.addEventListener("input", function () {
-        line.notes = note.value;
-        writeFormset();
-      });
-      row.appendChild(note);
+      row.appendChild(label);
 
       var controls = document.createElement("div");
       controls.className = "karaoke-summary-controls";
@@ -517,7 +650,7 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
       stepper.className = "karaoke-qty";
       stepper.appendChild(
         stepButton(TEXT.less, "−", function () {
-          setQuantity(line.id, line.quantity - 1);
+          setQuantity(line.lid, line.quantity - 1);
         })
       );
 
@@ -529,13 +662,13 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
       quantity.value = String(line.quantity);
       quantity.setAttribute("aria-label", TEXT.qty + " — " + line.name);
       quantity.addEventListener("change", function () {
-        setQuantity(line.id, parseInt(quantity.value, 10));
+        setQuantity(line.lid, parseInt(quantity.value, 10));
       });
       stepper.appendChild(quantity);
 
       stepper.appendChild(
         stepButton(TEXT.more, "+", function () {
-          setQuantity(line.id, line.quantity + 1);
+          setQuantity(line.lid, line.quantity + 1);
         })
       );
       controls.appendChild(stepper);
@@ -546,7 +679,7 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
       remove.setAttribute("aria-label", TEXT.remove + " — " + line.name);
       remove.textContent = TEXT.remove;
       remove.addEventListener("click", function () {
-        removeLine(line.id);
+        removeLine(line.lid);
       });
       controls.appendChild(remove);
 
@@ -561,17 +694,19 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
   }
 
   // Each catalogue button shows how many of it are already on the order, so
-  // the waiter can see the effect of the tap without leaving the grid.
+  // the waiter can see the effect of the tap without leaving the grid. Since
+  // #232 the same item may be on several lines, so the count is the sum
+  // across every line that references it.
   function renderCounts() {
     itemButtons.forEach(function (button) {
-      // Not aria-pressed: tapping an item adds another one, it does not
+      // Not aria-pressed: tapping an item opens the dialog, it does not
       // toggle a state. The count inside the button is what announces it.
       var badge = button.querySelector("[data-pick-count]");
-      var line = findLine(button.dataset.itemId);
-      button.classList.toggle("is-selected", !!line);
+      var total = quantityForItem(button.dataset.itemId);
+      button.classList.toggle("is-selected", total > 0);
       if (!badge) return;
-      badge.textContent = line ? line.quantity + "×" : "";
-      show(badge, !!line);
+      badge.textContent = total > 0 ? total + "×" : "";
+      show(badge, total > 0);
     });
   }
 
@@ -601,32 +736,37 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
     totalForms.value = String(order.length);
   }
 
-  function addItem(itemId) {
+  // Confirming the quantity/notes dialog appends a brand-new line (#232): the
+  // same item can be added twice, as separate lines with different notes, so
+  // nothing here de-duplicates. The dialog owns quantity and notes; the
+  // summary's stepper is the only way to adjust an existing line's quantity.
+  function addLine(itemId, quantity, notes) {
     var entry = catalogue[itemId];
     if (!entry) return;
-    var line = findLine(itemId);
-    if (line) {
-      line.quantity += 1;
-    } else {
-      order.push({ id: itemId, name: entry.name, quantity: 1, notes: "" });
-    }
+    order.push({
+      lid: newLineId(),
+      id: itemId,
+      name: entry.name,
+      quantity: quantity,
+      notes: notes || ""
+    });
     renderSummary();
   }
 
-  function setQuantity(itemId, quantity) {
-    var line = findLine(itemId);
+  function setQuantity(lid, quantity) {
+    var line = findLine(lid);
     if (!line) return;
     if (!quantity || isNaN(quantity) || quantity < 1) {
-      removeLine(itemId);
+      removeLine(lid);
       return;
     }
     line.quantity = quantity;
     renderSummary();
   }
 
-  function removeLine(itemId) {
+  function removeLine(lid) {
     order = order.filter(function (line) {
-      return line.id !== itemId;
+      return line.lid !== lid;
     });
     renderSummary();
   }
@@ -670,9 +810,160 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
 
   itemButtons.forEach(function (button) {
     button.addEventListener("click", function () {
-      addItem(button.dataset.itemId);
+      openLineDialog(button.dataset.itemId);
     });
   });
+
+  // --- the quantity / notes dialog (#232) ----------------------------------
+  //
+  // A second Bootstrap modal, opened from the add-item modal. Asks for the
+  // quantity (default 1, minimum 1, capped at the item's current stock) and
+  // an optional free-text note. The item's suggestion chips from #230 are
+  // rendered next to the notes field; tapping one inserts its text. Confirm
+  // closes both layers and appends a new line to step 2's order list — the
+  // same item may be added again as a separate line, so nothing here
+  // de-duplicates. No price is shown here either.
+
+  var lineDialogEl = document.getElementById("line-dialog");
+  var addItemDialogEl = document.getElementById("add-item-modal");
+  var lineDialogTitle = document.getElementById("line-dialog-title");
+  var lineDialogQty = document.getElementById("line-dialog-qty");
+  var lineDialogQtyLess = document.getElementById("line-dialog-qty-less");
+  var lineDialogQtyMore = document.getElementById("line-dialog-qty-more");
+  var lineDialogNotes = document.getElementById("line-dialog-notes");
+  var lineDialogSuggestions = document.getElementById("line-dialog-suggestions");
+  var lineDialogNoSuggestions = document.getElementById("line-dialog-no-suggestions");
+  var lineDialogStockHint = document.getElementById("line-dialog-stock-hint");
+  var lineDialogConfirm = document.getElementById("line-dialog-confirm");
+
+  // Bootstrap's Modal API is loaded from the vendor bundle in base.html.
+  var bsModalCtor = window.bootstrap && window.bootstrap.Modal;
+  var lineDialog = bsModalCtor ? bsModalCtor.getOrCreateInstance(lineDialogEl) : null;
+  var addItemDialog = bsModalCtor ? bsModalCtor.getOrCreateInstance(addItemDialogEl) : null;
+
+  // The item the dialog is currently editing. Captured in closure so the
+  // confirm handler does not need a second lookup.
+  var dialogItem = null;
+
+  function clampQuantity(value, max) {
+    var n = parseInt(value, 10);
+    if (isNaN(n) || n < 1) return 1;
+    if (max && n > max) return max;
+    return n;
+  }
+
+  function openLineDialog(itemId) {
+    var entry = catalogue[itemId];
+    if (!entry) return;
+    dialogItem = entry;
+
+    lineDialogTitle.textContent = entry.name;
+
+    // Default 1, minimum 1, capped at the item's current stock. The cap is a
+    // client-side convenience only — the server still re-validates under a
+    // lock on submission, so a race cannot oversell.
+    var max = entry.stock > 0 ? entry.stock : 1;
+    lineDialogQty.min = "1";
+    lineDialogQty.max = String(max);
+    lineDialogQty.value = "1";
+
+    if (lineDialogStockHint) {
+      lineDialogStockHint.textContent = TEXT.stock + ": " + max;
+      show(lineDialogStockHint, max > 0);
+    }
+
+    lineDialogNotes.value = "";
+
+    // Suggestion chips from #230, rebuilt per item from the data carried on
+    // each catalogue button. Items without suggestions show no chip row.
+    lineDialogSuggestions.textContent = "";
+    var suggestions = entry.suggestions || [];
+    suggestions.forEach(function (text) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "karaoke-filter-chip karaoke-suggestion-chip";
+      chip.textContent = text;
+      chip.addEventListener("click", function () {
+        // Tapping a chip inserts its text into the notes field. "Insert" per
+        // the spec: replace, rather than append, so repeated taps do not pile
+        // up duplicates — a single chip carries one suggestion, one tap.
+        lineDialogNotes.value = text;
+        lineDialogNotes.focus();
+      });
+      lineDialogSuggestions.appendChild(chip);
+    });
+    show(lineDialogNoSuggestions, suggestions.length === 0);
+
+    if (lineDialog) {
+      // Open the dialog on top of the add-item modal. Bootstrap stacks
+      // modals; the backdrop of the second sits over the first, and
+      // dismissing either returns to the right layer.
+      lineDialog.show();
+    } else {
+      // No Bootstrap JS: fall back to un-hiding the dialog element directly.
+      lineDialogEl.hidden = false;
+    }
+  }
+
+  function closeLineDialog() {
+    if (lineDialog) {
+      lineDialog.hide();
+    } else {
+      lineDialogEl.hidden = true;
+    }
+  }
+
+  function closeAddItemModal() {
+    if (addItemDialog) {
+      addItemDialog.hide();
+    } else {
+      addItemDialogEl.hidden = true;
+    }
+  }
+
+  function setDialogQuantity(value) {
+    var max = dialogItem && dialogItem.stock > 0 ? dialogItem.stock : 1;
+    lineDialogQty.value = String(clampQuantity(value, max));
+  }
+
+  if (lineDialogQtyLess) {
+    lineDialogQtyLess.addEventListener("click", function () {
+      setDialogQuantity(parseInt(lineDialogQty.value, 10) - 1);
+    });
+  }
+  if (lineDialogQtyMore) {
+    lineDialogQtyMore.addEventListener("click", function () {
+      setDialogQuantity(parseInt(lineDialogQty.value, 10) + 1);
+    });
+  }
+  if (lineDialogQty) {
+    lineDialogQty.addEventListener("change", function () {
+      setDialogQuantity(lineDialogQty.value);
+    });
+  }
+
+  if (lineDialogConfirm) {
+    lineDialogConfirm.addEventListener("click", function () {
+      if (!dialogItem) return;
+      var qty = clampQuantity(lineDialogQty.value, dialogItem.stock);
+      var notes = lineDialogNotes.value || "";
+      addLine(dialogItem.id, qty, notes);
+      // Confirming closes both layers: the dialog and the add-item modal.
+      closeLineDialog();
+      closeAddItemModal();
+    });
+  }
+
+  // Reset the dialog when it finishes hiding so a next open starts clean.
+  if (lineDialogEl) {
+    lineDialogEl.addEventListener("hidden.bs.modal", function () {
+      dialogItem = null;
+      lineDialogNotes.value = "";
+      lineDialogQty.value = "1";
+      lineDialogSuggestions.textContent = "";
+      show(lineDialogNoSuggestions, false);
+    });
+  }
 
   // --- the comanda picker ---------------------------------------------------
 
@@ -898,7 +1189,9 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
 
   // After a rejected submission the server re-renders the plain rows with the
   // waiter's lines still in them; read them back so the picker comes up
-  // showing the same order instead of an empty one.
+  // showing the same order instead of an empty one. Since #232 each rejected
+  // row becomes its own line — the same item on two rows stays as two lines,
+  // preserving the notes the waiter typed on each.
   Array.prototype.forEach.call(lineRows, function (row) {
     var select = row.querySelector("select");
     var quantity = row.querySelector("input[type=number]");
@@ -908,20 +1201,13 @@ No price is rendered anywhere: the waiter takes orders, the till does money.
     if (!entry) return;
     var parsed = parseInt(quantity ? quantity.value : "1", 10);
     var note = notes ? notes.value : "";
-    var line = findLine(entry.id);
-    if (line) {
-      line.quantity += parsed > 0 ? parsed : 1;
-      // The picker keeps one line per item, so two rejected rows for the same
-      // item collapse into one: keep the first note rather than losing it.
-      if (!line.notes) line.notes = note;
-    } else {
-      order.push({
-        id: entry.id,
-        name: entry.name,
-        quantity: parsed > 0 ? parsed : 1,
-        notes: note
-      });
-    }
+    order.push({
+      lid: newLineId(),
+      id: entry.id,
+      name: entry.name,
+      quantity: parsed > 0 ? parsed : 1,
+      notes: note
+    });
   });
 
   // The plain rows have handed over their values; drop them so they cannot

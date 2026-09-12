@@ -12,7 +12,7 @@ from django.test import TestCase, override_settings
 from django.urls import resolve, reverse
 from django.utils import timezone
 
-from inventory.models import Category, Item
+from inventory.models import Category, Item, NoteSuggestion
 from orders import urls as orders_urls
 from orders.forms import OrderForm
 from orders.models import Order, OrderItem
@@ -765,16 +765,48 @@ class OrderWizardTests(TestCase):
         self.assertIn('<select name="table"', step)
         self.assertIn("Opcional", step)
 
-    def test_step_two_holds_the_line_list_and_the_add_item_surface(self):
+    def test_step_two_holds_the_line_list_and_the_add_item_button(self):
         step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
         self.assertIn('id="order-summary"', step)
         self.assertIn('id="order-line-inputs"', step)
-        # The add-item surface stays one self-contained block so #232 can lift
-        # it into a modal without touching the rest of the step.
-        self.assertIn('id="add-item-surface"', step)
-        self.assertIn('id="category-chips"', step)
-        self.assertIn('id="item-search"', step)
-        self.assertIn('id="item-picker"', step)
+        # Since #232 the add-item surface is a full-screen modal reached from
+        # an "Adicionar item" button — the order list no longer offers inline
+        # item picking. The modal markup lives outside the step (it is a
+        # Bootstrap modal), so the step itself only carries the button.
+        self.assertIn("karaoke-add-item-btn", step)
+        self.assertIn('data-bs-target="#add-item-modal"', step)
+        # The inline category chips and item grid are gone from the step: they
+        # now live inside the modal.
+        self.assertNotIn('id="category-chips"', step)
+        self.assertNotIn('id="item-search"', step)
+        self.assertNotIn('id="item-picker"', step)
+
+    def test_the_add_item_modal_is_rendered_with_chips_search_and_picker(self):
+        """The full-screen modal (#232) carries the picker data the step used to."""
+        body = self._body()
+        modal = body.split('id="add-item-modal"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('modal-fullscreen', modal)
+        self.assertIn('id="category-chips"', modal)
+        self.assertIn('data-category="all"', modal)
+        self.assertIn('id="item-search"', modal)
+        self.assertIn('id="item-picker"', modal)
+        # "Todos" is the active chip by default.
+        chips = modal.split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn("karaoke-filter-chip is-on", chips)
+
+    def test_the_quantity_notes_dialog_is_rendered_after_the_add_item_modal(self):
+        """A second modal asks for quantity and notes when an item is tapped."""
+        body = self._body()
+        modal = body.split('id="line-dialog"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('id="line-dialog-title"', modal)
+        self.assertIn('id="line-dialog-qty"', modal)
+        self.assertIn('id="line-dialog-notes"', modal)
+        self.assertIn('id="line-dialog-suggestions"', modal)
+        self.assertIn('id="line-dialog-confirm"', modal)
+        # Quantity defaults to 1, minimum 1.
+        qty_field = modal.split('id="line-dialog-qty"', 1)[1].split(">", 1)[0]
+        self.assertIn('min="1"', qty_field)
+        self.assertIn('value="1"', qty_field)
 
     def test_step_three_holds_the_read_only_recap(self):
         step = self._body().split('data-step="3"', 1)[1].split("</form>", 1)[0]
@@ -919,6 +951,265 @@ class OrderWizardTests(TestCase):
             ".karaoke-recap",
             ".karaoke-recap-row",
             ".karaoke-recap-qty",
+        ):
+            self.assertIn(selector, scss)
+
+
+class AddItemModalTests(TestCase):
+    """The add-item modal and quantity/notes dialog on /pedidos/novo/ (#232).
+
+    The modal is a layer over the existing single-POST contract: the catalogue
+    is rendered inside a full-screen Bootstrap modal, tapping an item opens a
+    second dialog for quantity and notes, and confirming appends a line to the
+    hidden formset inputs. What the server owns is the markup and the data the
+    script drives — the category strip, the search field, the suggestion chips
+    riding on each item, and the absence of prices anywhere in the flow. The
+    POST contract and the no-JS fallback are covered by the suites above; this
+    class pins what #232 adds.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("garcom", password="secret123")
+        cls.drinks = Category.objects.create(name="Bebidas")
+        cls.food = Category.objects.create(name="Porções")
+        cls.empty_category = Category.objects.create(name="Sobremesas")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.tab = Tab.objects.create(name="Ana e amigos", table=cls.table)
+
+        cls.beer = Item.objects.create(
+            name="Cerveja", category=cls.drinks, price=Decimal("8.50"), stock=10
+        )
+        # Two curated suggestions — the chip row the dialog renders.
+        NoteSuggestion.objects.create(item=cls.beer, text="gelo")
+        NoteSuggestion.objects.create(item=cls.beer, text="rodela de limão")
+
+        cls.fries = Item.objects.create(
+            name="Batata frita", category=cls.food, price=Decimal("25.00"), stock=6
+        )
+        # No suggestions — the dialog shows no chip row for this item.
+
+        cls.dessert = Item.objects.create(
+            name="Pudim guardado",
+            category=cls.empty_category,
+            price=Decimal("12.00"),
+            stock=0,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def _body(self):
+        return self.client.get(reverse("orders:order-create")).content.decode()
+
+    def _modal(self):
+        return self._body().split('id="add-item-modal"', 1)[1].split("</form>", 1)[0]
+
+    def _dialog(self):
+        return self._body().split('id="line-dialog"', 1)[1].split("</form>", 1)[0]
+
+    # --- acceptance: the "Adicionar item" button replaces inline picking -----
+
+    def test_step_two_offers_an_adicionar_item_button(self):
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        self.assertIn("Adicionar item", step)
+        self.assertIn('data-bs-toggle="modal"', step)
+        self.assertIn('data-bs-target="#add-item-modal"', step)
+
+    def test_the_order_list_no_longer_offers_inline_item_picking(self):
+        """The inline category chips and item grid are gone from step 2."""
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        # The picker grid and the inline filter chips moved into the modal.
+        self.assertNotIn('id="item-picker"', step)
+        self.assertNotIn('id="category-chips"', step)
+        self.assertNotIn('id="item-search"', step)
+
+    # --- acceptance: full-screen modal with a pinned category strip ----------
+
+    def test_the_add_item_modal_is_full_screen(self):
+        modal = self._modal()
+        self.assertIn("modal-fullscreen", modal)
+        self.assertIn('role="dialog"', modal)
+
+    def test_the_category_strip_is_rendered_inside_the_modal(self):
+        modal = self._modal()
+        self.assertIn('id="category-chips"', modal)
+        for category in (self.drinks, self.food):
+            self.assertIn(f'data-category="{category.pk}"', modal)
+            self.assertIn(category.name, modal)
+
+    def test_the_category_strip_offers_todos_active_by_default(self):
+        modal = self._modal()
+        chips = modal.split('id="category-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('data-category="all"', chips)
+        self.assertIn("Todos", chips)
+        # Only "Todos" starts active.
+        self.assertIn("karaoke-filter-chip is-on", chips)
+
+    def test_a_category_with_nothing_sellable_gets_no_chip_in_the_modal(self):
+        modal = self._modal()
+        self.assertNotIn(f'data-category="{self.empty_category.pk}"', modal)
+
+    def test_the_search_field_is_rendered_below_the_category_strip(self):
+        modal = self._modal()
+        self.assertIn('id="item-search"', modal)
+
+    def test_the_item_grid_inside_the_modal_lists_sellable_items(self):
+        modal = self._modal()
+        for item in (self.beer, self.fries):
+            self.assertIn(f'data-item-id="{item.pk}"', modal)
+        for item in (self.dessert,):
+            self.assertNotIn(f'data-item-id="{item.pk}"', modal)
+
+    def test_no_match_in_the_modal_shows_a_friendly_empty_message(self):
+        modal = self._modal()
+        self.assertIn("data-item-empty", modal)
+        self.assertIn("Nenhum item encontrado", modal)
+
+    # --- acceptance: no price anywhere in the modal or the dialog ------------
+
+    def test_no_price_is_rendered_in_the_add_item_modal(self):
+        modal = self._modal()
+        self.assertNotIn("R$", modal)
+        self.assertNotIn("8.50", modal)
+        self.assertNotIn("25.00", modal)
+        self.assertNotIn("data-item-price", modal)
+
+    def test_no_price_is_rendered_in_the_quantity_notes_dialog(self):
+        dialog = self._dialog()
+        self.assertNotIn("R$", dialog)
+        self.assertNotIn("8.50", dialog)
+        self.assertNotIn("25.00", dialog)
+
+    # --- acceptance: suggestion chips ride along with the item data ----------
+
+    def test_each_item_carries_its_suggestions_as_data(self):
+        """The dialog clones chips from a `||`-joined data attribute (#230)."""
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn("data-item-suggestions", entry)
+        self.assertIn("gelo", entry)
+        self.assertIn("rodela de limão", entry)
+
+    def test_an_item_without_suggestions_carries_an_empty_attribute(self):
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.fries.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn("data-item-suggestions", entry)
+        # The attribute is present but empty — the script renders no chip row.
+        suggestions_attr = entry.split('data-item-suggestions="', 1)[1].split(
+            '"', 1
+        )[0]
+        self.assertEqual(suggestions_attr, "")
+
+    def test_the_dialog_renders_a_suggestion_chips_row(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-suggestions"', dialog)
+        self.assertIn("karaoke-suggestion-chips", dialog)
+
+    def test_the_dialog_renders_a_no_suggestions_empty_state(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-no-suggestions"', dialog)
+
+    def test_suggestion_text_is_escaped_in_the_data_attribute(self):
+        """Markup in a suggestion must not reach the DOM as live HTML.
+
+        ``escapejs`` is what the data attribute uses (the script reads it via
+        ``dataset``), so the angle brackets come through as ``\\u003C`` rather
+        than HTML entities — either way, the raw ``<b>`` never reaches the DOM.
+        """
+        item = Item.objects.create(
+            name="Item com sugestão maliciosa",
+            category=self.drinks,
+            price=Decimal("1.00"),
+            stock=1,
+        )
+        NoteSuggestion.objects.create(item=item, text="<b>gelo</b>")
+        body = self._body()
+        entry = body.split(f'data-item-id="{item.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertNotIn("<b>gelo</b>", entry)
+        self.assertIn("gelo", entry)
+
+    # --- acceptance: the quantity/notes dialog --------------------------------
+
+    def test_the_dialog_has_a_quantity_input_defaulting_to_one(self):
+        dialog = self._dialog()
+        qty_field = dialog.split('id="line-dialog-qty"', 1)[1].split(">", 1)[0]
+        self.assertIn('min="1"', qty_field)
+        self.assertIn('value="1"', qty_field)
+
+    def test_the_dialog_has_a_notes_input(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-notes"', dialog)
+        self.assertIn("maxlength=\"200\"", dialog)
+
+    def test_the_dialog_has_a_confirm_button(self):
+        dialog = self._dialog()
+        self.assertIn('id="line-dialog-confirm"', dialog)
+        self.assertIn("Confirmar", dialog)
+
+    def test_the_dialog_carries_the_max_stock_hint_for_the_script(self):
+        """The script caps the quantity stepper at the item's current stock."""
+        body = self._body()
+        entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
+            "</button>", 1
+        )[0]
+        self.assertIn('data-item-stock="10"', entry)
+
+    # --- acceptance: the single-POST contract and duplicate lines ------------
+
+    def test_the_dialog_writes_the_same_formset_field_names(self):
+        """The hidden inputs keep the ``lines-N-notes`` contract (#229)."""
+        body = self._body()
+        self.assertIn('"lines-" + index + "-notes"', body)
+        self.assertIn('"lines-" + index + "-item"', body)
+        self.assertIn('"lines-" + index + "-quantity"', body)
+
+    def test_duplicate_item_lines_can_be_posted_as_separate_lines(self):
+        """Two lines of the same item with different notes both land on the order."""
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-item": self.beer.pk,
+            "lines-0-quantity": "1",
+            "lines-0-notes": "com gelo",
+            "lines-1-item": self.beer.pk,
+            "lines-1-quantity": "2",
+            "lines-1-notes": "sem gelo",
+        }
+        resp = self.client.post(reverse("orders:order-create"), data)
+        self.assertEqual(resp.status_code, 302)
+
+        order = Order.objects.get()
+        lines = list(order.items.order_by("pk"))
+        self.assertEqual(len(lines), 2)
+        self.assertEqual([l.quantity for l in lines], [1, 2])
+        self.assertEqual([l.notes for l in lines], ["com gelo", "sem gelo"])
+        self.beer.refresh_from_db()
+        self.assertEqual(self.beer.stock, 7)
+
+    # --- acceptance: the wizard styling lives in the project's SCSS ----------
+
+    def test_the_modal_classes_are_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        for selector in (
+            ".karaoke-add-item-btn",
+            ".karaoke-modal-sticky",
+            ".karaoke-modal-chips",
+            ".karaoke-modal-scroll",
+            ".karaoke-suggestion-chip",
+            ".karaoke-summary-note",
         ):
             self.assertIn(selector, scss)
 
@@ -1619,21 +1910,35 @@ class OrderLineNotesTests(TestCase):
         self.assertIn('name="lines-4-notes"', body)
 
     def test_the_picker_posts_its_notes_through_the_same_formset_prefix(self):
-        """The touch picker writes the very same field names, per line."""
+        """The touch picker writes the very same field names, per line.
+
+        Since #232 the note is entered in the quantity/notes dialog and the
+        summary shows it read-only — the inline ``karaoke-note-input`` on the
+        summary row is gone, replaced by ``karaoke-summary-note`` and the
+        dialog's ``line-dialog-notes``. The formset contract is unchanged.
+        """
         body = self.client.get(reverse("orders:order-create")).content.decode()
         self.assertIn('"lines-" + index + "-notes"', body)
-        # A plain input on the summary row — the quantity/notes dialog with
-        # suggestion chips is #232 and must not have been built here.
-        self.assertIn("karaoke-note-input", body)
-        self.assertNotIn('data-bs-toggle="modal"', body)
-        self.assertNotIn('role="dialog"', body)
+        # The dialog owns the notes entry now; the summary only shows the value.
+        self.assertIn('id="line-dialog-notes"', body)
+        self.assertIn("karaoke-summary-note", body)
+        self.assertNotIn("karaoke-note-input", body)
+        # The add-item flow is now a Bootstrap modal (#232).
+        self.assertIn('data-bs-toggle="modal"', body)
+        self.assertIn('id="add-item-modal"', body)
 
     def test_the_note_input_style_is_defined_in_the_projects_scss(self):
-        """The compiled CSS is gitignored, so the source is what we can pin."""
+        """The compiled CSS is gitignored, so the source is what we can pin.
+
+        Since #232 the inline ``.karaoke-note-input`` on the summary row is
+        gone; the dialog's notes field is a plain ``.form-control`` and the
+        summary shows the note read-only as ``.karaoke-summary-note``. The
+        kitchen card's ``.kitchen-line-note`` is unchanged.
+        """
         scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
             encoding="utf-8"
         )
-        self.assertIn(".karaoke-note-input", scss)
+        self.assertIn(".karaoke-summary-note", scss)
         self.assertIn(".kitchen-line-note", scss)
 
     # --- acceptance: the kitchen screen -------------------------------------

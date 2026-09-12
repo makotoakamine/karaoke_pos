@@ -68,15 +68,20 @@ def _open_tabs():
 
 
 def _sellable_items():
-    """The sellable catalogue, alphabetically, with each item's category.
+    """The sellable catalogue, alphabetically, with each item's category and
+    note suggestions.
 
     Mirrors ``OrderItemLineForm.item``'s queryset: active items with stock
     above zero, nothing else. The category rides along so the client-side
-    chips can filter the rendered list without another request.
+    chips can filter the rendered list without another request. Since #232
+    the per-item note suggestions (#230) are prefetched in the same pass,
+    so the add-item dialog can render one-tap chips next to the notes box
+    without a second query per item.
     """
     return list(
         Item.objects.filter(is_active=True, stock__gt=0)
         .select_related("category")
+        .prefetch_related("note_suggestions")
         .order_by("name")
     )
 
