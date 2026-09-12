@@ -514,14 +514,21 @@ class OrderPickerDataTests(TestCase):
         self.assertIn(f'data-item-id="{self.fries.pk}"', body)
 
     def test_item_entries_carry_the_data_the_picker_needs(self):
+        """Name, stock and category — and, since #231, no price at all.
+
+        The waiter's screen shows no money, so the price is not merely hidden
+        with CSS: it is never rendered, not even as a data attribute the
+        script could read back.
+        """
         body = self._body()
         entry = body.split(f'data-item-id="{self.beer.pk}"', 1)[1].split(
             "</button>", 1
         )[0]
         self.assertIn('data-item-name="Cerveja"', entry)
-        self.assertIn('data-item-price="8.50"', entry)
         self.assertIn('data-item-stock="10"', entry)
-        self.assertIn("R$ 8.50", entry)
+        self.assertNotIn("data-item-price", entry)
+        self.assertNotIn("8.50", entry)
+        self.assertNotIn("R$", entry)
 
     def test_item_context_is_the_sellable_catalogue_alphabetically(self):
         resp = self.client.get(reverse("orders:order-create"))
@@ -566,13 +573,15 @@ class OrderPickerDataTests(TestCase):
             list(resp.context["item_categories"]), [self.drinks, self.food]
         )
 
-    # --- acceptance: summary, total and a reachable submit -------------------
+    # --- acceptance: the line list and a reachable submit --------------------
 
-    def test_the_page_renders_a_summary_with_a_running_total(self):
+    def test_the_page_renders_the_line_list_the_picker_fills_in(self):
         body = self._body()
         self.assertIn('id="order-summary"', body)
-        self.assertIn('id="order-total"', body)
         self.assertIn('id="order-line-inputs"', body)
+
+    def test_the_page_carries_no_running_total_since_prices_left(self):
+        self.assertNotIn('id="order-total"', self._body())
 
     def test_the_submit_rides_a_sticky_bar_so_it_stays_reachable(self):
         body = self._body()
@@ -682,6 +691,234 @@ class OrderPickerDataTests(TestCase):
             ".karaoke-qty",
             ".karaoke-submit-bar",
             ".karaoke-empty",
+        ):
+            self.assertIn(selector, scss)
+
+
+class OrderWizardTests(TestCase):
+    """The three-step wizard on /pedidos/novo/ (#231).
+
+    Stepping itself is JavaScript — blocking Avançar until a comanda is picked,
+    the recap, the back button — and is exercised in a browser, not here. What
+    is server-owned is the markup that JavaScript drives: three labelled step
+    sections with a progress indicator, the submit parked in the step-3 slot,
+    no price anywhere on the page, and a rejected POST coming back flagged so
+    the wizard knows not to reset itself. Those are what these tests pin.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("garcom", password="secret123")
+        cls.category = Category.objects.create(name="Bebidas")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.tab = Tab.objects.create(name="Ana e amigos", table=cls.table)
+        cls.beer = Item.objects.create(
+            name="Cerveja", category=cls.category, price=Decimal("8.50"), stock=10
+        )
+        cls.caipirinha = Item.objects.create(
+            name="Caipirinha",
+            category=cls.category,
+            price=Decimal("19.90"),
+            stock=4,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def _body(self):
+        return self.client.get(reverse("orders:order-create")).content.decode()
+
+    def _payload(self, lines, **overrides):
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item_pk, quantity) in enumerate(lines):
+            data[f"lines-{index}-item"] = item_pk
+            data[f"lines-{index}-quantity"] = quantity
+        data.update(overrides)
+        return data
+
+    # --- acceptance: three labelled steps with a progress indicator ---------
+
+    def test_the_page_renders_three_step_sections(self):
+        body = self._body()
+        for step in (1, 2, 3):
+            self.assertIn(f'data-step="{step}"', body)
+        self.assertNotIn('data-step="4"', body)
+
+    def test_the_progress_indicator_labels_every_step(self):
+        indicator = self._body().split('id="order-steps"', 1)[1].split("</ol>", 1)[0]
+        for step, label in ((1, "Comanda"), (2, "Itens"), (3, "Confirmação")):
+            self.assertIn(f'data-step-chip="{step}"', indicator)
+            self.assertIn(label, indicator)
+
+    def test_step_one_holds_the_comanda_picker_and_the_optional_table(self):
+        step = self._body().split('data-step="1"', 1)[1].split('data-step="2"', 1)[0]
+        self.assertIn('id="tab-search"', step)
+        self.assertIn('id="tab-picker"', step)
+        self.assertIn(f'data-tab-id="{self.tab.pk}"', step)
+        self.assertIn('<select name="table"', step)
+        self.assertIn("Opcional", step)
+
+    def test_step_two_holds_the_line_list_and_the_add_item_surface(self):
+        step = self._body().split('data-step="2"', 1)[1].split('data-step="3"', 1)[0]
+        self.assertIn('id="order-summary"', step)
+        self.assertIn('id="order-line-inputs"', step)
+        # The add-item surface stays one self-contained block so #232 can lift
+        # it into a modal without touching the rest of the step.
+        self.assertIn('id="add-item-surface"', step)
+        self.assertIn('id="category-chips"', step)
+        self.assertIn('id="item-search"', step)
+        self.assertIn('id="item-picker"', step)
+
+    def test_step_three_holds_the_read_only_recap(self):
+        step = self._body().split('data-step="3"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('id="order-recap"', step)
+        self.assertIn('id="order-recap-lines"', step)
+        self.assertIn("Confirmação", step)
+
+    # --- acceptance: the submit belongs to step 3 ---------------------------
+
+    def test_the_wizard_submit_starts_hidden_next_to_the_step_controls(self):
+        """Only step 3 may send the order, so its button comes up hidden.
+
+        The script unhides it on the confirmation step and nowhere else; what
+        the server can guarantee is that the enhanced path ships exactly one
+        submit and that it starts out of reach.
+        """
+        bar = self._body().split("karaoke-submit-bar", 1)[1].split("</form>", 1)[0]
+        self.assertIn("data-wizard-back", bar)
+        self.assertIn("data-wizard-next", bar)
+        self.assertIn("data-wizard-submit hidden", bar)
+
+    def test_the_plain_submit_is_the_no_javascript_path(self):
+        """With scripting off the steps all render and the plain submit works."""
+        body = self._body()
+        # The step sections are not hidden in the markup — the script hides
+        # the two it is not showing.
+        self.assertNotIn('data-step="1" hidden', body)
+        self.assertNotIn('class="karaoke-step" hidden', body)
+        actions = body.split('class="karaoke-actions" data-order-plain', 1)[1]
+        self.assertIn('type="submit"', actions.split("</div>", 1)[0])
+
+    # --- acceptance: no price anywhere in the waiter's flow ------------------
+
+    def test_no_price_is_rendered_anywhere_on_the_order_page(self):
+        body = self._body()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("8.50", body)
+        self.assertNotIn("19.90", body)
+        self.assertNotIn("data-item-price", body)
+        self.assertNotIn('id="order-total"', body)
+
+    def test_no_price_survives_a_rejected_re_render_either(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.caipirinha.pk, 99)]),
+        )
+        self.assertEqual(resp.status_code, 400)
+        body = resp.content.decode()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("19.90", body)
+
+    def test_the_script_no_longer_carries_price_bookkeeping(self):
+        """Dropped, not hidden: no money helper is left in the page script."""
+        body = self._body()
+        self.assertNotIn("function money", body)
+        self.assertNotIn("toFixed", body)
+
+    # --- acceptance: a rejection seeds the wizard instead of resetting it ----
+
+    def test_a_fresh_page_is_not_flagged_as_a_rejection(self):
+        resp = self.client.get(reverse("orders:order-create"))
+        self.assertFalse(resp.context["submission_rejected"])
+        self.assertNotIn("data-order-rejected", resp.content.decode())
+
+    def test_a_rejected_submission_is_flagged_with_the_lines_intact(self):
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.beer.pk, 2), (self.caipirinha.pk, 99)]),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(resp.context["submission_rejected"])
+        body = resp.content.decode()
+        self.assertIn('data-order-rejected="1"', body)
+        # The error the waiter has to read, above the steps so it is visible
+        # whichever step the wizard lands on.
+        self.assertIn("Estoque insuficiente", body)
+        # and the chosen comanda plus both lines are still in the plain rows
+        # the wizard seeds itself from.
+        self.assertIn(f'<option value="{self.tab.pk}" selected>', body)
+        self.assertIn(f'<option value="{self.beer.pk}" selected>', body)
+        self.assertIn(f'<option value="{self.caipirinha.pk}" selected>', body)
+        self.assertIn('value="99"', body)
+        self.assertFalse(Order.objects.exists())
+
+    def test_a_rejection_with_no_items_is_flagged_too(self):
+        resp = self.client.post(reverse("orders:order-create"), self._payload([]))
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(resp.context["submission_rejected"])
+        self.assertContains(resp, "Adicione ao menos um item", status_code=400)
+
+    # --- acceptance: submitting still creates the order exactly as before ----
+
+    def test_a_wizard_submission_creates_the_order_and_moves_stock(self):
+        """The wizard posts what the plain form posts: same names, same shape."""
+        resp = self.client.post(
+            reverse("orders:order-create"),
+            self._payload([(self.beer.pk, 3), (self.caipirinha.pk, 1)]),
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        order = Order.objects.get()
+        self.assertEqual(order.tab_id, self.tab.pk)
+        self.assertEqual(order.table_id, self.table.pk)
+        self.assertEqual(
+            sorted(order.items.values_list("item__name", "quantity")),
+            [("Caipirinha", 1), ("Cerveja", 3)],
+        )
+        self.beer.refresh_from_db()
+        self.caipirinha.refresh_from_db()
+        self.assertEqual(self.beer.stock, 7)
+        self.assertEqual(self.caipirinha.stock, 3)
+
+    def test_the_submitted_order_reaches_the_kitchen_and_the_tab_detail(self):
+        self.client.post(
+            reverse("orders:order-create"), self._payload([(self.beer.pk, 2)])
+        )
+        order = Order.objects.get()
+
+        kitchen = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", kitchen)
+        self.assertIn("Cerveja", kitchen)
+
+        detail = self.client.get(
+            reverse("tabs:tab-detail", args=[self.tab.pk])
+        ).content.decode()
+        self.assertIn(f"#{order.pk}", detail)
+        self.assertIn("Cerveja", detail)
+
+    # --- acceptance: the wizard styling lives in the project's SCSS ----------
+
+    def test_the_wizard_classes_are_defined_in_the_projects_scss(self):
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        for selector in (
+            ".karaoke-steps",
+            ".karaoke-step-chip",
+            ".karaoke-step-num",
+            ".karaoke-step-label",
+            ".karaoke-wizard-status",
+            ".karaoke-wizard-hint",
+            ".karaoke-recap",
+            ".karaoke-recap-row",
+            ".karaoke-recap-qty",
         ):
             self.assertIn(selector, scss)
 

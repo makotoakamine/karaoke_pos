@@ -12,8 +12,17 @@ submission is rejected with a clear form error and nothing is changed.
 
 Since #225 the same view also hands the template the raw picker data — the
 open tabs, the sellable catalogue and its categories — so the touch UI can
-filter client-side without a second endpoint. The POST contract is unchanged:
-the picker is a layer over the very same form fields and formset.
+filter client-side without a second endpoint. Since #231 that page is a
+three-step wizard (comanda, itens, confirmação), but entirely on the client:
+the steps are sections of the same form, and the POST contract is unchanged —
+one form, one formset, one submission. The only thing the wizard needs from
+the server is ``submission_rejected``, so a refused POST comes back on the
+step where the problem is rather than on a blank step 1.
+
+Prices never reach the waiter's screen (#231): the catalogue is rendered
+without them and the order page shows no totals. ``OrderItem.unit_price`` is
+still snapshotted here — the till and the kitchen tickets need it, the waiter
+does not.
 
 Table occupancy is deliberately not touched here (#224): the table is now only
 a hint for the waiter, and ``tables.Table.status`` is owned by the tables
@@ -100,6 +109,11 @@ class OrderCreateView(LoginRequiredMixin, View):
             "open_tabs": _open_tabs(),
             "sellable_items": _sellable_items(),
             "item_categories": _sellable_categories(),
+            # The wizard (#231) needs to know it is re-rendering a refusal, so
+            # it can seed itself on the step where the problem is instead of
+            # dropping the waiter on a blank step 1. Every rejection path here
+            # renders with a 4xx; a fresh page is the only 200.
+            "submission_rejected": status != 200,
         }
         return render(request, self.template_name, context, status=status)
 
