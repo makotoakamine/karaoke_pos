@@ -2,9 +2,10 @@
 {% if orders %}
   <div class="row g-3" id="kitchen-queue-grid">
     {% for order in orders %}
-      {% comment %}The elapsed-time indicator escalates with the ticket's age:
-      accent edge up to 15 minutes, amber past 15, red past 30. Computed here
-      rather than in the view so the polling endpoint gets it for free.{% endcomment %}
+      {% comment %}The prefetch in _open_orders_queryset already drops orders
+      with zero kitchen lines, but the template guards again so a serve-direct-
+      only round never renders a blank card even if the queryset is reused.{% endcomment %}
+      {% if order.items.all %}
       {% with waiting=order.created_at|minutes_since %}
         <div class="col-12 col-md-6 col-xl-4" data-order-pk="{{ order.pk }}">
           <div class="card h-100 kitchen-card{% if waiting >= 30 %} kitchen-card-overdue{% elif waiting >= 15 %} kitchen-card-late{% endif %}">
@@ -71,6 +72,7 @@
           </div>
         </div>
       {% endwith %}
+      {% endif %}
     {% endfor %}
   </div>
 {% else %}

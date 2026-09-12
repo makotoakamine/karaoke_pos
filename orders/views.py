@@ -37,6 +37,7 @@ from typing import Iterable, Tuple
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
+from django.db.models import Prefetch
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
@@ -238,19 +239,45 @@ class OrderCreateView(LoginRequiredMixin, View):
         return redirect(reverse_lazy("orders:order-create"))
 
 
+def _kitchen_items_prefetch():
+    """Prefetch only the order lines whose item needs kitchen preparation.
+
+    The kitchen screen and the printed ticket both walk ``order.items.all``;
+    since #233 an item may be flagged ``requires_kitchen_preparation=False``
+    (a serve-direct drink or shelf snack), and such a line must never reach
+    the kitchen surfaces. Filtering at the prefetch level means every order
+    handed to the kitchen already carries only its kitchen lines, with no
+    template change — and orders whose prefetch comes back empty are dropped
+    by :func:`_open_orders_queryset` so a drinks-only round never renders a
+    card.
+    """
+    return Prefetch(
+        "items",
+        queryset=OrderItem.objects.filter(
+            item__requires_kitchen_preparation=True
+        ).select_related("item"),
+    )
+
+
 def _open_orders_queryset():
-    """Open orders, oldest first, with their tab, table and items prefetched.
+    """Open orders with at least one kitchen line, oldest first.
 
     The kitchen screen works top-down so the oldest ticket is always at the
-    top of the pile. Prefetching the items and the item's name keeps the
-    polling endpoint to a single query per refresh.
+    top of the pile. Prefetching only the kitchen lines (and the item's name)
+    keeps the polling endpoint to a single query per refresh and means the
+    template's ``order.items.all`` already carries only what the cook needs.
+
+    Orders whose kitchen-line prefetch comes back empty are dropped here, so a
+    serve-direct-only round never renders a blank card — the order stays open
+    and visible on the comanda, just not on the kitchen screen.
     """
-    return (
+    qs = (
         Order.objects.filter(status=Order.Status.OPEN)
         .select_related("tab", "table")
-        .prefetch_related("items__item")
+        .prefetch_related(_kitchen_items_prefetch())
         .order_by("created_at")
     )
+    return [order for order in qs if order.items.all()]
 
 
 class KitchenView(LoginRequiredMixin, View):
@@ -329,11 +356,12 @@ class OrderPrintView(LoginRequiredMixin, View):
     """
 
     def post(self, request, pk, *args, **kwargs):
-        # Prefetch the lines the way the queue does: the ticket walks them all,
-        # and an unknown order is a plain 404 (a stale card, most likely).
+        # Prefetch the lines the way the queue does — only kitchen lines — so
+        # the ticket and the screen always agree on what to prepare. An unknown
+        # order is a plain 404 (a stale card, most likely).
         order = get_object_or_404(
             Order.objects.select_related("tab", "table").prefetch_related(
-                "items__item"
+                _kitchen_items_prefetch()
             ),
             pk=pk,
         )
