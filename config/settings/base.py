@@ -81,6 +81,13 @@ STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Media (user-uploaded files) — used by the site configuration's alert sound
+# FileField (#238). The uploaded sound lives under MEDIA_ROOT so the player
+# subprocess can read it from a local filesystem path; MEDIA_URL resolves it
+# to a URL the config page can display in dev.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = Path(os.getenv("KARAOKE_MEDIA_ROOT", str(BASE_DIR / "media")))
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Thermal printer (ESC/POS) — kitchen tickets (#228)

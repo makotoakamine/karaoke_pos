@@ -7,13 +7,31 @@ always reading/writing the row with ``pk=1``: the first access creates it via
 more than one configuration row in the database, and a fresh project renders
 the config page fine because the row is auto-created on first access.
 
-This first round carries a single boolean — ``auto_print_on_kitchen_arrival``
-— which drives whether the waiter's order page automatically sends a kitchen
-ticket to the thermal printer the moment an order with at least one
-kitchen-preparation line is committed (#237). The setting defaults to ``False``
-so a fresh install never surprises anyone with printer traffic.
+The first runtime-configurable setting is ``auto_print_on_kitchen_arrival``
+(#237), which drives whether the waiter's order page automatically sends a
+kitchen ticket to the thermal printer the moment an order with at least one
+kitchen-preparation line is committed. The setting defaults to ``False`` so a
+fresh install never surprises anyone with printer traffic.
+
+Since #238 the singleton also carries an optional ``alert_sound`` file: when a
+kitchen auto-print attempt fails because no printer answers, the POS server
+host plays that sound (or the built-in bundled default when none is uploaded)
+through :func:`core.services.alerts.play_alert`. The field is a
+:class:`~django.db.models.FileField`, blank/optional, stored under
+``MEDIA_ROOT``; an empty field means the built-in sound is used.
 """
+from django.conf import settings
 from django.db import models
+
+
+def _alert_sound_upload_to(instance, filename: str) -> str:
+    """Storage path (relative to ``MEDIA_ROOT``) for an uploaded alert sound.
+
+    The singleton row only ever keeps one alert sound at a time, so the upload
+    path is fixed and deterministic — a new upload replaces the previous file
+    rather than accumulating copies.
+    """
+    return "alert_sounds/alert.wav"
 
 
 class Configuracao(models.Model):
@@ -36,6 +54,16 @@ class Configuracao(models.Model):
             "nunca disparam a impressão automática."
         ),
     )
+    alert_sound = models.FileField(
+        "som do alerta de falha de impressão",
+        upload_to=_alert_sound_upload_to,
+        blank=True,
+        null=True,
+        help_text=(
+            "Som tocado no servidor quando a impressão automática falha. Em "
+            "branco usa o som padrão embutido no projeto."
+        ),
+    )
 
     class Meta:
         verbose_name = "Configuração"
@@ -43,6 +71,20 @@ class Configuracao(models.Model):
 
     def __str__(self) -> str:
         return "Configuração do site"
+
+    @property
+    def alert_sound_name(self) -> str:
+        """A human-readable label for the currently configured alert sound.
+
+        Used by the config page to show which sound is active. Returns the
+        uploaded file's basename when one is present, otherwise a fixed label
+        for the built-in default sound.
+        """
+        if self.alert_sound:
+            import os
+
+            return os.path.basename(self.alert_sound.name)
+        return "Som padrão (alert.wav embutido)"
 
 
 def get_config() -> Configuracao:
