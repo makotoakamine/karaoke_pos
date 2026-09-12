@@ -62,13 +62,14 @@ A interface está em português brasileiro (pt-br).
   - `tabs/urls.py` – `/comandas/` (lista), `/comandas/nova/` (criar) e
     `/comandas/<pk>/editar/` (editar).
   - `tabs/admin.py` – registra `Tab` no admin do Django como fallback.
-- **`orders/`** – app de pedidos (#109, #224, #225).
+- **`orders/`** – app de pedidos (#109, #224, #225, #229).
   - `orders/models.py` – `Order` (FK obrigatória para `tabs.Tab`, FK opcional
     para `tables.Table`, ambas `PROTECT`, status aberta/encerrada,
     `created_at`) e `OrderItem` (FK para o pedido, FK para `inventory.Item`,
-    `quantity`, `unit_price` com snapshot do preço no momento do pedido). O
+    `quantity`, `unit_price` com snapshot do preço no momento do pedido e
+    `notes`, a observação livre da linha — "com gelo e limão"). O
     pedido pertence à comanda; a mesa é só contexto de entrega e pode ficar
-    vazia.
+    vazia; a observação é opcional e o normal é a linha não ter nenhuma.
   - `orders/views.py` – página de abertura de pedido (login required) com
     seleção de comanda (obrigatória, só comandas abertas) + mesa (opcional) +
     formset de itens; o POST roda numa transação única, relê a comanda com
@@ -89,6 +90,8 @@ A interface está em português brasileiro (pt-br).
     "encerrada"; pedidos encerrados nunca aparecem na tela. Nem a comanda nem
     a ocupação das mesas são tocadas aqui. O card da cozinha usa o nome da
     comanda como título e mostra a mesa embaixo só quando o pedido tem uma.
+    Cada linha mostra a observação do garçom (#229) logo abaixo do item, só
+    quando ela existe.
     Desde #228 cada card tem também um botão "Imprimir", que faz POST para
     `/pedidos/<pk>/imprimir/` e manda o cupom da cozinha para a impressora
     térmica — ver ["Impressão térmica"](#impressão-térmica-cupom-de-cozinha-228).
@@ -103,9 +106,10 @@ A interface está em português brasileiro (pt-br).
     (`ReceiptBuilder`, constantes ESC/POS, `normalize_text` e `strip_escpos`),
     também portado do Okinawa POS. Só o cupom de cozinha é montado aqui:
     cabeçalho com o nome da comanda, a mesa (quando houver), o número do
-    pedido e a hora, e uma linha por item com a quantidade — sem preços. Os
-    acentos são normalizados para ASCII porque as impressoras térmicas usam
-    code pages DOS (CP437/CP850).
+    pedido e a hora, e uma linha por item com a quantidade — sem preços —
+    seguida da observação da linha (#229), recuada sob o item e quebrada na
+    largura do papel, quando houver. Os acentos são normalizados para ASCII
+    porque as impressoras térmicas usam code pages DOS (CP437/CP850).
   - `orders/urls.py` – `/pedidos/novo/` (abrir pedido), `/pedidos/cozinha/`
     (tela de cozinha), `/pedidos/cozinha/fila/` (polling dos cards),
     `/pedidos/cozinha/<pk>/pronto/` (marcar pedido como pronto) e
@@ -118,9 +122,10 @@ A interface está em português brasileiro (pt-br).
   substitui e passa a dirigi-los: busca por nome nas comandas abertas, chips
   de categoria + busca por nome no catálogo, um toque adiciona o item (o
   segundo toque aumenta a quantidade), resumo com controle de quantidade,
-  remoção e total corrente, e barra de envio fixa no rodapé. Com o
-  JavaScript desligado a mesma página entrega os controles de formulário
-  comuns e envia normalmente.
+  campo de observação por linha (#229), remoção e total corrente, e barra de
+  envio fixa no rodapé. Com o JavaScript desligado a mesma página entrega os
+  controles de formulário comuns — inclusive o campo de observação de cada
+  linha — e envia normalmente.
 - **`templates/base.html`** – esqueleto da página: navbar superior + bloco
   `content` que toda página filha estende. Carrega o CSS compilado localmente e
   o bundle JS do Bootstrap servido localmente. A navbar mostra "Entrar" para

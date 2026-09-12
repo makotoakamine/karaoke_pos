@@ -1227,3 +1227,277 @@ class KitchenReceiptBuilderTests(TestCase):
         builder = ReceiptBuilder(width=20, margin=2)
         builder.lr("Itens:", "3")
         self.assertIn("Itens:           3", builder.to_text())
+
+
+@override_settings(KARAOKE_PRINTER_DRY_RUN=True)
+class OrderLineNotesTests(TestCase):
+    """Acceptance tests for the per-line note, waiter to kitchen (#229).
+
+    The note is one free-text field that has to survive the whole trip: typed
+    on the order page, posted through the ``lines-`` formset, stored on the
+    :class:`OrderItem`, shown on the kitchen card and printed on the ticket.
+    Each leg of that trip gets its own test, plus the case that must stay
+    boring — a line with no note at all.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+        cls.tab = Tab.objects.create(name="Comanda Ana")
+        cls.table = Table.objects.create(name="Mesa 7", seats=4)
+        cls.category = Category.objects.create(name="bebidas")
+        cls.caipirinha = Item.objects.create(
+            name="Caipirinha", category=cls.category, price=Decimal("22.00"), stock=20
+        )
+        cls.fries = Item.objects.create(
+            name="Porção de batata frita",
+            category=cls.category,
+            price=Decimal("34.90"),
+            stock=10,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.dump_dir = Path(tempfile.mkdtemp(prefix="karaoke-receipts-"))
+        self.addCleanup(shutil.rmtree, self.dump_dir, True)
+        patched = override_settings(KARAOKE_PRINTER_DUMP_DIR=self.dump_dir)
+        patched.enable()
+        self.addCleanup(patched.disable)
+
+    # --- helpers -----------------------------------------------------------
+
+    def _post(self, lines):
+        """POST the order page with ``lines`` as ``(item, quantity, notes)``."""
+        data = {
+            "tab": self.tab.pk,
+            "table": self.table.pk,
+            "lines-TOTAL_FORMS": str(len(lines)),
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+        }
+        for index, (item, quantity, notes) in enumerate(lines):
+            data[f"lines-{index}-item"] = item.pk
+            data[f"lines-{index}-quantity"] = str(quantity)
+            if notes is not None:
+                data[f"lines-{index}-notes"] = notes
+        return self.client.post(reverse("orders:order-create"), data)
+
+    def _make_order(self, lines, table=None):
+        """Build an order directly from ``(item, quantity, notes)`` triples."""
+        order = Order.objects.create(tab=self.tab, table=table)
+        for item, quantity, notes in lines:
+            OrderItem.objects.create(
+                order=order,
+                item=item,
+                quantity=quantity,
+                unit_price=item.price,
+                notes=notes,
+            )
+        return order
+
+    def _ticket_text(self, order):
+        self.client.post(reverse("orders:order-print", args=[order.pk]))
+        return (self.dump_dir / f"pedido-{order.pk}-cozinha.txt").read_text(
+            encoding="utf-8"
+        )
+
+    # --- acceptance: the model's new field ---------------------------------
+
+    def test_a_line_without_a_note_defaults_to_the_empty_string(self):
+        """The normal case: no note, no ``None`` to guard against downstream."""
+        order = Order.objects.create(tab=self.tab)
+        line = OrderItem.objects.create(
+            order=order, item=self.caipirinha, quantity=1, unit_price=Decimal("22.00")
+        )
+        line.refresh_from_db()
+        self.assertEqual(line.notes, "")
+
+    # --- acceptance: the note round-trips from POST to the OrderItem --------
+
+    def test_a_note_posted_on_a_line_is_stored_on_the_order_item(self):
+        resp = self._post([(self.caipirinha, 2, "com gelo e limão")])
+        self.assertEqual(resp.status_code, 302)
+
+        line = OrderItem.objects.get()
+        self.assertEqual(line.item_id, self.caipirinha.pk)
+        self.assertEqual(line.quantity, 2)
+        self.assertEqual(line.notes, "com gelo e limão")
+
+    def test_each_line_keeps_its_own_note(self):
+        self._post(
+            [
+                (self.caipirinha, 1, "sem açúcar"),
+                (self.fries, 1, "bem passada"),
+            ]
+        )
+        notes = {
+            line.item.name: line.notes for line in OrderItem.objects.select_related("item")
+        }
+        self.assertEqual(notes["Caipirinha"], "sem açúcar")
+        self.assertEqual(notes["Porção de batata frita"], "bem passada")
+
+    def test_a_note_is_stripped_of_surrounding_whitespace(self):
+        self._post([(self.caipirinha, 1, "  com gelo  ")])
+        self.assertEqual(OrderItem.objects.get().notes, "com gelo")
+
+    # --- acceptance: a blank note stays valid and changes nothing -----------
+
+    def test_a_line_with_a_blank_note_still_submits(self):
+        resp = self._post([(self.caipirinha, 1, "")])
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(OrderItem.objects.get().notes, "")
+
+    def test_a_line_that_posts_no_notes_field_at_all_still_submits(self):
+        """Exactly the pre-#229 POST body: it has to keep working untouched."""
+        resp = self._post([(self.caipirinha, 3, None)])
+        self.assertEqual(resp.status_code, 302)
+
+        line = OrderItem.objects.get()
+        self.assertEqual(line.quantity, 3)
+        self.assertEqual(line.notes, "")
+        self.caipirinha.refresh_from_db()
+        self.assertEqual(self.caipirinha.stock, 17)
+
+    def test_a_note_on_one_line_leaves_the_other_line_blank(self):
+        self._post([(self.caipirinha, 1, "com gelo"), (self.fries, 1, "")])
+        notes = {
+            line.item.name: line.notes for line in OrderItem.objects.select_related("item")
+        }
+        self.assertEqual(notes["Caipirinha"], "com gelo")
+        self.assertEqual(notes["Porção de batata frita"], "")
+
+    def test_a_note_over_the_field_length_is_rejected_without_writing(self):
+        resp = self._post([(self.caipirinha, 1, "x" * 201)])
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+        self.assertFalse(OrderItem.objects.exists())
+
+    # --- acceptance: the waiter-side inputs ---------------------------------
+
+    def test_the_plain_formset_rows_offer_a_notes_input(self):
+        """The no-JS path: every rendered row has its own ``lines-N-notes``."""
+        body = self.client.get(reverse("orders:order-create")).content.decode()
+        self.assertIn('name="lines-0-notes"', body)
+        self.assertIn('name="lines-4-notes"', body)
+
+    def test_the_picker_posts_its_notes_through_the_same_formset_prefix(self):
+        """The touch picker writes the very same field names, per line."""
+        body = self.client.get(reverse("orders:order-create")).content.decode()
+        self.assertIn('"lines-" + index + "-notes"', body)
+        # A plain input on the summary row — the quantity/notes dialog with
+        # suggestion chips is #232 and must not have been built here.
+        self.assertIn("karaoke-note-input", body)
+        self.assertNotIn('data-bs-toggle="modal"', body)
+        self.assertNotIn('role="dialog"', body)
+
+    def test_the_note_input_style_is_defined_in_the_projects_scss(self):
+        """The compiled CSS is gitignored, so the source is what we can pin."""
+        scss = (settings.BASE_DIR / "static" / "scss" / "main.scss").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".karaoke-note-input", scss)
+        self.assertIn(".kitchen-line-note", scss)
+
+    # --- acceptance: the kitchen screen -------------------------------------
+
+    def test_kitchen_card_shows_the_note_under_its_item(self):
+        self._make_order([(self.caipirinha, 2, "com gelo e limão")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+
+        self.assertIn("Caipirinha", body)
+        self.assertIn(
+            '<p class="kitchen-line-note">com gelo e limão</p>', body
+        )
+
+    def test_polling_fragment_also_shows_the_note(self):
+        self._make_order([(self.caipirinha, 1, "sem açúcar")])
+        body = self.client.get(reverse("orders:kitchen-queue")).content.decode()
+        self.assertIn('<p class="kitchen-line-note">sem açúcar</p>', body)
+
+    def test_a_line_without_a_note_renders_no_note_element(self):
+        self._make_order([(self.caipirinha, 1, "")])
+        for url in (reverse("orders:kitchen"), reverse("orders:kitchen-queue")):
+            body = self.client.get(url).content.decode()
+            self.assertNotIn("kitchen-line-note", body)
+
+    def test_only_the_line_with_a_note_gets_one_on_the_card(self):
+        self._make_order([(self.caipirinha, 1, "com gelo"), (self.fries, 2, "")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertEqual(body.count("kitchen-line-note"), 1)
+
+    def test_a_note_with_markup_is_escaped_on_the_card(self):
+        self._make_order([(self.caipirinha, 1, "sem <b>gelo</b>")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("<b>gelo</b>", body)
+        self.assertIn("&lt;b&gt;gelo&lt;/b&gt;", body)
+
+    def test_the_kitchen_card_still_shows_no_prices(self):
+        self._make_order([(self.caipirinha, 1, "com gelo")])
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn("R$", body)
+        self.assertNotIn("22.00", body)
+
+    # --- acceptance: the printed ticket -------------------------------------
+
+    def test_the_ticket_prints_the_note_indented_under_its_item(self):
+        order = self._make_order([(self.caipirinha, 2, "com gelo e limão")])
+        text = self._ticket_text(order)
+
+        lines = text.splitlines()
+        item_at = next(i for i, line in enumerate(lines) if "2x Caipirinha" in line)
+        note_at = next(i for i, line in enumerate(lines) if "com gelo e limao" in line)
+
+        # Directly under the item it belongs to...
+        self.assertEqual(note_at, item_at + 1)
+        # ...and indented further in than the item line itself.
+        item_indent = len(lines[item_at]) - len(lines[item_at].lstrip())
+        note_indent = len(lines[note_at]) - len(lines[note_at].lstrip())
+        self.assertGreater(note_indent, item_indent)
+
+    def test_the_ticket_normalizes_the_notes_accents(self):
+        order = self._make_order([(self.fries, 1, "sem açúcar, bem passada")])
+        text = self._ticket_text(order)
+        self.assertIn("sem acucar, bem passada", text)
+        self.assertNotIn("açúcar", text)
+
+    def test_a_long_note_wraps_to_the_paper_width(self):
+        note = (
+            "sem cebola sem pimenta sem tomate e por favor mandar o molho "
+            "separado em um potinho a parte"
+        )
+        order = self._make_order([(self.fries, 1, note)])
+        text = self._ticket_text(order)
+
+        wrapped = [line for line in text.splitlines() if "sem cebola" in line]
+        self.assertEqual(len(wrapped), 1)
+        # Wrapped, not truncated: the tail is on the paper too, and nothing
+        # overflows the configured width.
+        self.assertIn("potinho", text)
+        for line in text.splitlines():
+            self.assertLessEqual(len(line), settings.KARAOKE_RECEIPT_WIDTH)
+
+    def test_the_ticket_omits_the_note_line_when_there_is_none(self):
+        order = self._make_order([(self.caipirinha, 1, "")])
+        text = self._ticket_text(order)
+        self.assertIn("1x Caipirinha", text)
+        # The only dashes left are the rules, never an empty "- " note.
+        self.assertNotIn("- \n", text)
+
+    def test_the_ticket_with_notes_still_carries_no_prices(self):
+        order = self._make_order(
+            [(self.caipirinha, 2, "com gelo"), (self.fries, 1, "bem passada")]
+        )
+        text = self._ticket_text(order)
+        self.assertNotIn("R$", text)
+        self.assertNotIn("22.00", text)
+        self.assertNotIn("34.90", text)
+
+    def test_a_note_typed_by_the_waiter_reaches_the_printed_ticket(self):
+        """The whole trip in one test: POST, kitchen card, paper."""
+        self._post([(self.caipirinha, 1, "com gelo e limão")])
+        order = Order.objects.get()
+
+        card = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("com gelo e limão", card)
+        self.assertIn("com gelo e limao", self._ticket_text(order))
