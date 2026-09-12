@@ -383,10 +383,13 @@ h1, h2, h3, h4, h5, h6,
 }
 
 // -- Order form (/pedidos/novo/) ---------------------------------------------
-// The page is a touch picker (#225) layered over the real form controls. The
-// plain controls below are what renders with scripting off — and what the
-// picker hides once it takes over — so they keep the two-column line grid:
-// a flexible item picker and a compact, fixed-width quantity box.
+// The page is a touch picker (#225) laid out as a three-step wizard (#231)
+// over the real form controls. The plain controls below are what renders with
+// scripting off — and what the picker hides once it takes over — so they keep
+// the two-column line grid: a flexible item picker and a compact, fixed-width
+// quantity box.
+// No money anywhere on this screen (#231): the waiter takes orders, the till
+// does totals, so nothing here styles a price.
 #order-lines {
   > thead th,
   > tbody td {
@@ -411,8 +414,9 @@ h1, h2, h3, h4, h5, h6,
   }
 }
 
-// Each step of the order (comanda, mesa, itens, resumo) is its own block,
-// separated by the same hairline the rest of the app uses between sections.
+// Each block inside a step (comanda, mesa, itens, adicionar item) is separated
+// by the same hairline the rest of the app uses between sections. `of-type`
+// resolves per step, so every step opens flush and closes without a rule.
 .karaoke-order-block {
   padding: 1.25rem 0;
   border-bottom: 1px solid var(--bs-border-color);
@@ -422,11 +426,163 @@ h1, h2, h3, h4, h5, h6,
   }
 }
 
-// In picker mode the sticky action bar sits over the foot of the form, so the
-// last block needs room to clear it.
+// In picker mode the sticky navigation bar sits over the foot of the form, so
+// the last block of the visible step needs room to clear it.
 .karaoke-order-enhanced .karaoke-order-block:last-of-type {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+// -- Wizard: step indicator --------------------------------------------------
+// Three numbered chips across the top, joined by a hairline so they read as a
+// path rather than three separate buttons. Each is a real button: tapping one
+// already passed walks back to it.
+.karaoke-steps {
+  display: flex;
+  margin: 0 0 .5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.karaoke-steps-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.karaoke-step-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: .5rem .35rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  background-color: transparent;
+  border: 0;
+  border-bottom: 2px solid var(--bs-border-color);
+
+  &:hover,
+  &:focus-visible {
+    color: #{tint-color($primary, 45%)};
+  }
+
+  &.is-done {
+    color: var(--bs-body-color);
+    border-bottom-color: rgba(var(--bs-primary-rgb), .55);
+  }
+
+  &.is-current {
+    color: #{tint-color($primary, 50%)};
+    border-bottom-color: $primary;
+  }
+}
+
+// The number is the part that survives at 360px, where the label is dropped.
+.karaoke-step-num {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: .9rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--bs-body-color);
+  background-color: rgba(var(--bs-emphasis-color-rgb), .08);
+  border: 1px solid var(--bs-border-color);
+
+  .karaoke-step-chip.is-done & {
+    color: #{tint-color($primary, 45%)};
+    border-color: rgba(var(--bs-primary-rgb), .55);
+  }
+
+  .karaoke-step-chip.is-current & {
+    color: var(--bs-body-bg);
+    background-color: $primary;
+    border-color: $primary;
+  }
+}
+
+.karaoke-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// -- Wizard: navigation bar --------------------------------------------------
+// Which step the waiter is on, in the same slot the running total used to
+// occupy before prices left this screen (#231).
+.karaoke-wizard-status .karaoke-title {
+  font-size: 1.15rem;
+}
+
+// What the waiter still has to do before Avançar will move. It sits above the
+// actions, on its own row so it never squeezes them, and reads as the standing
+// instruction it is rather than as an error.
+.karaoke-wizard-hint {
+  flex: 1 1 100%;
+  padding: .4rem .6rem;
+  font-size: .85rem;
+  color: var(--bs-secondary-color);
+  background-color: rgba(var(--bs-emphasis-color-rgb), .05);
+  border-left: 3px solid var(--bs-border-color);
+}
+
+// -- Wizard: confirmation recap ----------------------------------------------
+// Read-only by construction: definition rows for the comanda and the mesa,
+// then the lines with their quantities. No controls, no prices.
+.karaoke-recap {
+  margin: 0 0 1rem;
+}
+
+.karaoke-recap-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem;
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+
+  dt {
+    flex: 0 0 7rem;
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color);
+  }
+
+  dd {
+    flex: 1 1 9rem;
+    margin: 0;
+    min-width: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--bs-emphasis-color);
+    overflow-wrap: anywhere;
+  }
+}
+
+// The recap lines reuse `.karaoke-summary-line`, but with nothing to control:
+// the name takes the room and the quantity holds the right edge.
+.karaoke-recap-lines .karaoke-pick-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1.05rem;
+}
+
+.karaoke-recap-qty {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #{tint-color($primary, 45%)};
 }
 
 // Search boxes are thumb-sized and full width: they are the first thing the
@@ -634,10 +790,10 @@ h1, h2, h3, h4, h5, h6,
   min-height: 2.75rem;
 }
 
-// -- Sticky submit bar -------------------------------------------------------
+// -- Sticky navigation bar ---------------------------------------------------
 // On a phone the waiter is deep in the catalogue when the order is done, so
-// the total and the submit ride the bottom of the viewport instead of sitting
-// at the foot of a long form.
+// the step navigation rides the bottom of the viewport instead of sitting at
+// the foot of a long form.
 // The negative margins bleed the bar over the card's own padding so it reads
 // as a bar across the foot of the card rather than a floating button row.
 .karaoke-submit-bar {
@@ -658,10 +814,6 @@ h1, h2, h3, h4, h5, h6,
     margin: 1.5rem -1.5rem -1.5rem;
     padding: .85rem 1.5rem;
   }
-}
-
-.karaoke-submit-bar-total .karaoke-title {
-  font-size: 1.35rem;
 }
 
 .karaoke-submit-bar-actions {
@@ -685,8 +837,15 @@ h1, h2, h3, h4, h5, h6,
 }
 
 @include media-breakpoint-down(sm) {
-  // At 360px the bar has to hold a total and two actions without overflowing:
-  // let the actions take the full row under the total and split the width.
+  // At 360px only the numbers fit across three chips; the step's own name is
+  // spelled out in the navigation bar right below anyway.
+  .karaoke-step-label {
+    display: none;
+  }
+
+  // At 360px the bar has to hold the step name and two actions without
+  // overflowing: let the actions take the full row under it and split the
+  // width.
   .karaoke-submit-bar-actions {
     flex: 1 1 100%;
 
