@@ -1385,6 +1385,22 @@ class KitchenViewTests(TestCase):
         cls.item2 = Item.objects.create(
             name="Porção", category=cls.category, price=Decimal("25.00"), stock=10
         )
+        # Since #233 an item may be flagged serve-direct (no kitchen prep); the
+        # kitchen surfaces must only carry items that need preparation (#234).
+        cls.kitchen_item = Item.objects.create(
+            name="Batata frita",
+            category=cls.category,
+            price=Decimal("25.00"),
+            stock=10,
+            requires_kitchen_preparation=True,
+        )
+        cls.serve_direct_item = Item.objects.create(
+            name="Refrigerante lata",
+            category=cls.category,
+            price=Decimal("6.00"),
+            stock=30,
+            requires_kitchen_preparation=False,
+        )
 
     def setUp(self):
         self.client.force_login(self.user)
@@ -1669,6 +1685,62 @@ class KitchenViewTests(TestCase):
         resp = self.client.get(reverse("core:home"))
         self.assertContains(resp, reverse("orders:kitchen"))
 
+    # --- acceptance: only kitchen-preparation lines reach the screen (#234) --
+
+    def test_kitchen_card_shows_only_kitchen_preparation_lines(self):
+        """A mixed order shows the kitchen item and hides the serve-direct one."""
+        order = self._make_order(
+            self.tab_a,
+            [(self.kitchen_item, 2), (self.serve_direct_item, 3)],
+            table=self.table_a,
+        )
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", body)
+        self.assertIn("Batata frita", body)
+        self.assertIn("2x", body)
+        # The serve-direct line is absent from the card entirely.
+        self.assertNotIn("Refrigerante lata", body)
+        self.assertNotIn("3x", body)
+
+    def test_polling_fragment_shows_only_kitchen_preparation_lines(self):
+        order = self._make_order(
+            self.tab_a,
+            [(self.kitchen_item, 1), (self.serve_direct_item, 2)],
+        )
+        body = self.client.get(reverse("orders:kitchen-queue")).content.decode()
+        self.assertIn(f"#{order.pk}", body)
+        self.assertIn("Batata frita", body)
+        self.assertNotIn("Refrigerante lata", body)
+
+    def test_serve_direct_only_order_is_absent_from_the_kitchen_page(self):
+        """A round with no kitchen items never renders a card, even while open."""
+        order = self._make_order(
+            self.tab_a, [(self.serve_direct_item, 2)], table=self.table_a
+        )
+        # The order is still open — it just has nothing for the kitchen.
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        body = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertNotIn(f"#{order.pk}", body)
+        self.assertNotIn("Refrigerante lata", body)
+        self.assertNotIn(self.tab_a.name, body)
+
+    def test_serve_direct_only_order_is_absent_from_the_polling_fragment(self):
+        order = self._make_order(self.tab_a, [(self.serve_direct_item, 1)])
+        body = self.client.get(reverse("orders:kitchen-queue")).content.decode()
+        self.assertNotIn(f"#{order.pk}", body)
+        self.assertNotIn("Refrigerante lata", body)
+
+    def test_serve_direct_only_order_falls_through_to_the_empty_state(self):
+        """With only a serve-direct round open, the screen shows 'no orders'."""
+        self._make_order(self.tab_a, [(self.serve_direct_item, 1)])
+        page = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn("Sem pedidos abertos", page)
+        fragment = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn("Sem pedidos abertos", fragment)
+
 
 @override_settings(KARAOKE_PRINTER_DRY_RUN=True)
 class OrderPrintViewTests(TestCase):
@@ -1696,6 +1768,21 @@ class OrderPrintViewTests(TestCase):
             category=cls.category,
             price=Decimal("34.90"),
             stock=10,
+        )
+        # Since #234 the ticket only lists kitchen-preparation items.
+        cls.kitchen_item = Item.objects.create(
+            name="Porção de batata frita",
+            category=cls.category,
+            price=Decimal("34.90"),
+            stock=10,
+            requires_kitchen_preparation=True,
+        )
+        cls.serve_direct_item = Item.objects.create(
+            name="Refrigerante lata",
+            category=cls.category,
+            price=Decimal("6.00"),
+            stock=30,
+            requires_kitchen_preparation=False,
         )
 
     def setUp(self):
@@ -1846,6 +1933,40 @@ class OrderPrintViewTests(TestCase):
         resp = self.client.get(reverse("orders:kitchen-queue"))
         self.assertContains(resp, reverse("orders:order-print", args=[order.pk]))
 
+    # --- acceptance: ticket lists only kitchen-preparation lines (#234) ----
+
+    def test_ticket_lists_only_kitchen_preparation_items(self):
+        order = self._make_order(
+            [(self.kitchen_item, 2), (self.serve_direct_item, 3)]
+        )
+        self._print(order)
+        text = self._ticket_text(order)
+
+        self.assertIn("2x Porcao de batata frita", text)
+        # The serve-direct line is absent from the printed ticket.
+        self.assertNotIn("Refrigerante lata", text)
+        self.assertNotIn("3x", text)
+
+    def test_ticket_totals_count_only_kitchen_preparation_lines(self):
+        """'Total de itens' and 'Total de unidades' count only preparation lines."""
+        order = self._make_order(
+            [(self.kitchen_item, 2), (self.serve_direct_item, 3)]
+        )
+        self._print(order)
+        text = self._ticket_text(order)
+
+        # Only one kitchen line of 2 units — the serve-direct 3 units do not
+        # count toward the kitchen totals.
+        self.assertIn("Total de itens:", text)
+        self.assertIn("Total de unidades:", text)
+        lines = text.splitlines()
+        itens_line = next(line for line in lines if "Total de itens:" in line)
+        unidades_line = next(
+            line for line in lines if "Total de unidades:" in line
+        )
+        self.assertTrue(itens_line.rstrip().endswith("1"), itens_line)
+        self.assertTrue(unidades_line.rstrip().endswith("2"), unidades_line)
+
 
 class KitchenReceiptBuilderTests(TestCase):
     """Unit tests for the ported ESC/POS helpers."""
@@ -1893,6 +2014,14 @@ class OrderLineNotesTests(TestCase):
             category=cls.category,
             price=Decimal("34.90"),
             stock=10,
+        )
+        # Since #234 the kitchen surfaces only carry kitchen-preparation items.
+        cls.serve_direct = Item.objects.create(
+            name="Refrigerante lata",
+            category=cls.category,
+            price=Decimal("6.00"),
+            stock=30,
+            requires_kitchen_preparation=False,
         )
 
     def setUp(self):
@@ -2154,3 +2283,52 @@ class OrderLineNotesTests(TestCase):
         card = self.client.get(reverse("orders:kitchen")).content.decode()
         self.assertIn("com gelo e limão", card)
         self.assertIn("com gelo e limao", self._ticket_text(order))
+
+    # --- acceptance: only kitchen-preparation lines on screen and paper (#234)
+
+    def test_mixed_order_kitchen_card_omits_serve_direct_lines(self):
+        """A serve-direct line never reaches the kitchen card."""
+        order = self._make_order(
+            [(self.fries, 2, "bem passada"), (self.serve_direct, 3, "")]
+        )
+        card = self.client.get(reverse("orders:kitchen")).content.decode()
+        self.assertIn(f"#{order.pk}", card)
+        self.assertIn("Porção de batata frita", card)
+        self.assertIn("bem passada", card)
+        self.assertNotIn("Refrigerante lata", card)
+
+    def test_mixed_order_polling_fragment_omits_serve_direct_lines(self):
+        self._make_order(
+            [(self.fries, 1, ""), (self.serve_direct, 2, "")]
+        )
+        body = self.client.get(
+            reverse("orders:kitchen-queue")
+        ).content.decode()
+        self.assertIn("Porção de batata frita", body)
+        self.assertNotIn("Refrigerante lata", body)
+
+    def test_mixed_order_ticket_omits_serve_direct_lines(self):
+        """The printed ticket lists only the kitchen-preparation item."""
+        order = self._make_order(
+            [(self.fries, 2, "bem passada"), (self.serve_direct, 3, "")]
+        )
+        text = self._ticket_text(order)
+        self.assertIn("2x Porcao de batata frita", text)
+        self.assertIn("bem passada", text)
+        self.assertNotIn("Refrigerante lata", text)
+        self.assertNotIn("3x", text)
+
+    def test_mixed_order_ticket_totals_count_only_kitchen_lines(self):
+        """Totals on the ticket count only kitchen-preparation lines."""
+        order = self._make_order(
+            [(self.fries, 2, ""), (self.serve_direct, 3, "")]
+        )
+        text = self._ticket_text(order)
+        lines = text.splitlines()
+        itens_line = next(line for line in lines if "Total de itens:" in line)
+        unidades_line = next(
+            line for line in lines if "Total de unidades:" in line
+        )
+        # One kitchen line, two units — the serve-direct 3 units are excluded.
+        self.assertTrue(itens_line.rstrip().endswith("1"), itens_line)
+        self.assertTrue(unidades_line.rstrip().endswith("2"), unidades_line)
