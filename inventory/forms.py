@@ -1,7 +1,7 @@
 """Forms for the inventory app."""
 from django import forms
 
-from .models import Category, Item
+from .models import Category, Item, NoteSuggestion
 
 
 class ItemForm(forms.ModelForm):
@@ -15,6 +15,14 @@ class ItemForm(forms.ModelForm):
     ``category`` is re-declared as well so the picker keeps a deterministic
     alphabetical order, offers a "select one" placeholder instead of a blank
     line, and refuses an empty submission with a Portuguese message (#223).
+
+    ``note_suggestions`` is the one field that is not on the model (#230): a
+    textarea of one suggestion per line, edited here rather than on a separate
+    screen because a chip list is a property of the item, not an entity staff
+    would go looking for. Save syncs the :class:`NoteSuggestion` rows to
+    whatever the textarea now says — lines added become rows, lines removed are
+    deleted — so the textarea is the single source of truth and create and edit
+    behave identically.
     """
 
     class Meta:
@@ -58,6 +66,90 @@ class ItemForm(forms.ModelForm):
         },
         help_text="Quantidade atual em estoque (zero é permitido, negativo não).",
     )
+
+    note_suggestions = forms.CharField(
+        label="Sugestões de observação",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 4,
+                "placeholder": "gelo\nrodela de limão",
+            }
+        ),
+        help_text=(
+            "Uma sugestão por linha. Aparecem como atalhos ao lançar o item no "
+            "pedido. Linhas em branco e repetidas são ignoradas."
+        ),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # On edit, pre-fill the textarea from the rows already saved. Only when
+        # the caller did not pass an explicit initial, so a re-displayed bound
+        # form still shows what was typed.
+        if self.instance.pk and "note_suggestions" not in self.initial:
+            self.initial["note_suggestions"] = "\n".join(
+                self.instance.note_suggestions.values_list("text", flat=True)
+            )
+
+    def clean_note_suggestions(self) -> list:
+        """Turn the raw textarea into the exact list of suggestions to keep.
+
+        Whitespace is trimmed, blank lines and repeats are dropped silently —
+        typing the same chip twice is a slip, not an error worth blocking a
+        save on — and the surviving order is the one the user typed.
+        """
+        raw = self.cleaned_data.get("note_suggestions") or ""
+        texts = []
+        for line in raw.splitlines():
+            text = line.strip()
+            if not text or text in texts:
+                continue
+            if len(text) > NoteSuggestion._meta.get_field("text").max_length:
+                raise forms.ValidationError(
+                    "Cada sugestão deve ter no máximo 100 caracteres: "
+                    f'"{text[:40]}…" é longa demais.'
+                )
+            texts.append(text)
+        return texts
+
+    def save(self, commit=True):
+        item = super().save(commit=commit)
+        if commit:
+            self._sync_note_suggestions(item)
+        else:
+            # Defer to save_m2m() like Django does for m2m data: the rows need
+            # the item's PK, which does not exist yet with commit=False.
+            save_m2m = self.save_m2m
+
+            def save_related():
+                save_m2m()
+                self._sync_note_suggestions(self.instance)
+
+            self.save_m2m = save_related
+        return item
+
+    def _sync_note_suggestions(self, item) -> None:
+        """Make the item's rows match ``cleaned_data`` exactly.
+
+        Rows are matched by text, so untouched suggestions keep their PK and
+        their ``created_at`` instead of being churned on every save.
+        """
+        texts = self.cleaned_data.get("note_suggestions") or []
+        existing = {s.text: s for s in item.note_suggestions.all()}
+
+        stale = [s.pk for text, s in existing.items() if text not in texts]
+        if stale:
+            item.note_suggestions.filter(pk__in=stale).delete()
+
+        NoteSuggestion.objects.bulk_create(
+            [
+                NoteSuggestion(item=item, text=text)
+                for text in texts
+                if text not in existing
+            ]
+        )
 
 
 class CategoryForm(forms.ModelForm):

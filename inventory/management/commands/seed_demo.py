@@ -11,13 +11,18 @@ The three categories come from the data migration
 ``0003_seed_starter_categories`` and are looked up by name, never by PK, so a
 database where those rows were recreated (or the migration reversed) still
 lands on a single category per name.
+
+Some drinks also carry a couple of note suggestions (#230) so the chip list on
+the add-item dialog has real data to show. They are seeded with the same
+``get_or_create`` rule as everything else: a chip a user renamed stays renamed,
+and re-running never duplicates one.
 """
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from inventory.models import Category, Item
+from inventory.models import Category, Item, NoteSuggestion
 
 # Category names as seeded by inventory/migrations/0003_seed_starter_categories.py.
 NAO_ALCOOLICAS = "bebidas não alcoólicas"
@@ -34,6 +39,22 @@ DEMO_ITEMS = [
         "category": NAO_ALCOOLICAS,
         "price": Decimal("7.00"),
         "stock": 96,
+    },
+    # The two canonical chip examples from #230: same "gelo" suggestion on both
+    # items (allowed — uniqueness is per item), different citrus each.
+    {
+        "name": "Coca-Cola lata 350ml",
+        "category": NAO_ALCOOLICAS,
+        "price": Decimal("8.00"),
+        "stock": 72,
+        "note_suggestions": ["gelo", "rodela de limão"],
+    },
+    {
+        "name": "Guaraná lata 350ml",
+        "category": NAO_ALCOOLICAS,
+        "price": Decimal("8.00"),
+        "stock": 66,
+        "note_suggestions": ["gelo", "rodela de laranja"],
     },
     {
         "name": "Água mineral 500ml",
@@ -86,6 +107,7 @@ DEMO_ITEMS = [
         "category": ALCOOLICAS,
         "price": Decimal("18.00"),
         "stock": 45,
+        "note_suggestions": ["sem açúcar", "com vodka"],
     },
     {
         "name": "Gin tônica",
@@ -111,6 +133,7 @@ DEMO_ITEMS = [
         "category": COMIDAS,
         "price": Decimal("32.00"),
         "stock": 26,
+        "note_suggestions": ["sem sal", "bem passada", "com cheddar"],
     },
     {
         "name": "Isca de frango",
@@ -150,6 +173,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         categories, categories_created = self._seed_categories()
         items_created, items_existing = self._seed_items(categories)
+        suggestions_created = self._seed_note_suggestions()
 
         self.stdout.write("")
         if categories_created:
@@ -177,7 +201,14 @@ class Command(BaseCommand):
                 )
             )
 
-        if not items_created and not categories_created:
+        if suggestions_created:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Sugestões de observação criadas: {suggestions_created}."
+                )
+            )
+
+        if not items_created and not categories_created and not suggestions_created:
             self.stdout.write(
                 self.style.WARNING("Nada a fazer: o catálogo de demonstração já estava completo.")
             )
@@ -232,3 +263,28 @@ class Command(BaseCommand):
                 existing_count += 1
                 self.stdout.write(f"  = item \"{item.name}\" (já existia)")
         return created_count, existing_count
+
+    def _seed_note_suggestions(self):
+        """Attach the demo chip lists to the items that declare one (#230).
+
+        Runs over the items by name so a row someone created by hand before the
+        first seed still gets its suggestions. ``get_or_create`` on
+        ``(item, text)`` is exactly the model's unique constraint, so a second
+        run creates nothing and an edited chip is left alone.
+        """
+        created_count = 0
+        for spec in DEMO_ITEMS:
+            texts = spec.get("note_suggestions")
+            if not texts:
+                continue
+            for item in Item.objects.filter(name=spec["name"]):
+                for text in texts:
+                    _, created = NoteSuggestion.objects.get_or_create(
+                        item=item, text=text
+                    )
+                    if created:
+                        created_count += 1
+                        self.stdout.write(
+                            f"  + sugestão \"{text}\" em \"{item.name}\""
+                        )
+        return created_count
