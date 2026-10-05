@@ -1,5 +1,6 @@
 """Forms for the inventory app."""
 from django import forms
+from django.core.validators import FileExtensionValidator
 
 from .models import Category, Item, NoteSuggestion
 
@@ -27,9 +28,10 @@ class ItemForm(forms.ModelForm):
 
     class Meta:
         model = Item
-        fields = ["name", "category", "price", "stock", "is_active", "requires_kitchen_preparation"]
+        fields = ["name", "category", "description", "price", "stock", "is_active", "requires_kitchen_preparation"]
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-control"}),
+            "description": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
             "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             "requires_kitchen_preparation": forms.CheckboxInput(
                 attrs={"class": "form-check-input"}
@@ -179,3 +181,36 @@ class CategoryForm(forms.ModelForm):
                 "unique": "Já existe uma categoria com esse nome.",
             }
         }
+
+
+class ItemImportForm(forms.Form):
+    """Upload form for the spreadsheet import (#398).
+
+    Only the extension is checked here; whether the bytes are really an .xlsx
+    with the expected headers is the importer's call, so a renamed file still
+    gets a readable error instead of a traceback.
+    """
+
+    file = forms.FileField(
+        label="Planilha (.xlsx)",
+        validators=[
+            FileExtensionValidator(
+                allowed_extensions=["xlsx"],
+                message="Envie um arquivo no formato .xlsx (Excel).",
+            )
+        ],
+        widget=forms.ClearableFileInput(
+            attrs={
+                "class": "form-control",
+                "accept": ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }
+        ),
+        error_messages={
+            "required": "Selecione a planilha a importar.",
+            "empty": "O arquivo enviado está vazio.",
+        },
+        help_text=(
+            "Primeira aba, cabeçalhos na linha 1: Categoria, Item, Descrição, "
+            "Estoque, Preço, Cozinha?. A coluna Observações é ignorada."
+        ),
+    )

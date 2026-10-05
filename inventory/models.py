@@ -60,6 +60,11 @@ class Item(models.Model):
         verbose_name="categoria",
         help_text="Categoria do item no catálogo (obrigatória).",
     )
+    description = models.TextField(
+        "descrição",
+        blank=True,
+        help_text="Descrição opcional do item (ex.: ingredientes, acompanhamentos).",
+    )
     price = models.DecimalField(
         "preço",
         max_digits=10,

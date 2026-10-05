@@ -16,11 +16,13 @@ from django.utils.translation import gettext as _
 from django.views.generic import (
     CreateView,
     DeleteView,
+    FormView,
     ListView,
     UpdateView,
 )
 
-from .forms import CategoryForm, ItemForm
+from .forms import CategoryForm, ItemForm, ItemImportForm
+from .importers import SpreadsheetImportError, import_items
 from .models import Category, Item
 
 
@@ -62,6 +64,29 @@ class ItemDeleteView(LoginRequiredMixin, DeleteView):
 
     def get_success_url(self) -> str:
         return reverse_lazy("inventory:item-list")
+
+
+class ItemImportView(LoginRequiredMixin, FormView):
+    """Upload an .xlsx menu and upsert the catalogue from it (#398).
+
+    The work happens in :func:`inventory.importers.import_items`; this view
+    only renders its summary on the same page. A file-level failure becomes a
+    form error, and the importer guarantees nothing was written in that case.
+    """
+
+    form_class = ItemImportForm
+    template_name = "inventory/item_import.html"
+    extra_context = {"title": "Importar planilha"}
+
+    def form_valid(self, form):
+        try:
+            result = import_items(form.cleaned_data["file"])
+        except SpreadsheetImportError as exc:
+            form.add_error("file", str(exc))
+            return self.form_invalid(form)
+        return self.render_to_response(
+            self.get_context_data(form=self.get_form_class()(), result=result)
+        )
 
 
 class CategoryListView(LoginRequiredMixin, ListView):

@@ -1,13 +1,17 @@
 """Functional tests for the inventory app covering the task's acceptance criteria."""
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
+
+import openpyxl
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
 
+from inventory.importers import SpreadsheetImportError, import_items
 from inventory.models import Category, Item, NoteSuggestion
 from inventory.management.commands.seed_demo import (
     NAO_ALCOOLICAS,
@@ -775,3 +779,280 @@ class NoteSuggestionSeedDemoTests(TestCase):
 
     def test_reports_the_suggestions_it_created(self):
         self.assertIn("Sugestões de observação criadas:", self.run_command())
+
+
+HEADERS = ["Categoria", "Item", "Descrição", "Estoque", "Preço", "Cozinha?", "Observações"]
+
+
+def make_workbook(rows, headers=HEADERS, name="menu.xlsx"):
+    """Build an .xlsx in memory: ``headers`` in row 1, then ``rows``."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return SimpleUploadedFile(
+        name,
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+SAMPLE_ROWS = [
+    ["Teishoku", "Karague", "Frango empanado", 99999, 50, "S", None],
+    ["Pratos Donburi", "Nikuyasai Tamanho M", "Contra-filé com legumes", 99999, 64, "S", None],
+    ["Teppan na Chapa", "Nikuyasai Tamanho M", "Carne com legumes", 99999, 65, "s ", None],
+    ["Bebidas Não Alcoólicas", "Água", None, 99999, 6, None, None],
+    ["Cervejas", "Heineken 600ML", None, 99999, 25.5, "N", None],
+    [None, None, None, None, None, None, None],
+    ["Drinks", "Gin Tônica", "Drink", 99999, None, None, "Preço ilegível"],
+]
+
+
+class ItemImporterTests(TestCase):
+    """The import function itself, without HTTP (#398)."""
+
+    def setUp(self):
+        # Start from a truly empty catalogue (0003 seeds starter categories).
+        Category.objects.all().delete()
+
+    def test_creates_categories_and_items(self):
+        result = import_items(make_workbook(SAMPLE_ROWS))
+
+        self.assertEqual(result.categories_created, 5)
+        self.assertEqual(result.items_created, 5)
+        self.assertEqual(result.items_updated, 0)
+        self.assertEqual(Category.objects.count(), 5)
+        karague = Item.objects.get(name="Karague")
+        self.assertEqual(karague.category.name, "Teishoku")
+        self.assertEqual(karague.price, Decimal("50.00"))
+        self.assertEqual(karague.stock, 99999)
+        self.assertEqual(karague.description, "Frango empanado")
+        self.assertTrue(karague.is_active)
+        self.assertEqual(Item.objects.get(name="Heineken 600ML").price, Decimal("25.50"))
+
+    def test_kitchen_flag_mapping(self):
+        import_items(make_workbook(SAMPLE_ROWS))
+
+        self.assertTrue(Item.objects.get(name="Karague").requires_kitchen_preparation)
+        self.assertFalse(Item.objects.get(name="Água").requires_kitchen_preparation)
+        self.assertFalse(
+            Item.objects.get(name="Heineken 600ML").requires_kitchen_preparation
+        )
+        # "s " is trimmed and case-folded.
+        self.assertTrue(
+            Item.objects.get(
+                name="Nikuyasai Tamanho M", category__name="Teppan na Chapa"
+            ).requires_kitchen_preparation
+        )
+
+    def test_same_name_in_two_categories_creates_two_items(self):
+        import_items(make_workbook(SAMPLE_ROWS))
+
+        nikuyasai = Item.objects.filter(name="Nikuyasai Tamanho M")
+        self.assertEqual(nikuyasai.count(), 2)
+        self.assertEqual(
+            nikuyasai.get(category__name="Pratos Donburi").price, Decimal("64.00")
+        )
+        self.assertEqual(
+            nikuyasai.get(category__name="Teppan na Chapa").price, Decimal("65.00")
+        )
+
+    def test_reupload_updates_instead_of_duplicating(self):
+        import_items(make_workbook(SAMPLE_ROWS))
+        karague = Item.objects.get(name="Karague")
+        karague.is_active = False
+        karague.save()
+        untouched = Item.objects.create(
+            name="Fora da planilha",
+            category=karague.category,
+            price=Decimal("1.00"),
+            stock=3,
+        )
+
+        rows = [list(r) for r in SAMPLE_ROWS]
+        rows[0] = ["teishoku", " KARAGUE ", "Novo texto", 10, 55, None, None]
+        result = import_items(make_workbook(rows))
+
+        self.assertEqual(result.categories_created, 0)
+        self.assertEqual(result.items_created, 0)
+        self.assertEqual(result.items_updated, 5)
+        self.assertEqual(Category.objects.count(), 5)
+        self.assertEqual(Item.objects.count(), 6)
+        karague.refresh_from_db()
+        self.assertEqual(karague.name, "Karague")
+        self.assertEqual(karague.price, Decimal("55.00"))
+        self.assertEqual(karague.stock, 10)
+        self.assertEqual(karague.description, "Novo texto")
+        self.assertFalse(karague.requires_kitchen_preparation)
+        self.assertFalse(karague.is_active)  # never touched on existing items
+        untouched.refresh_from_db()
+        self.assertEqual(untouched.price, Decimal("1.00"))
+        self.assertEqual(untouched.stock, 3)
+
+    def test_matches_existing_category_case_insensitively_with_accents(self):
+        Category.objects.create(name="BEBIDAS NÃO ALCOÓLICAS")
+        result = import_items(make_workbook(SAMPLE_ROWS))
+
+        self.assertEqual(result.categories_created, 4)
+        self.assertEqual(
+            Item.objects.get(name="Água").category.name, "BEBIDAS NÃO ALCOÓLICAS"
+        )
+
+    def test_row_without_price_is_skipped_and_reported(self):
+        result = import_items(make_workbook(SAMPLE_ROWS))
+
+        self.assertFalse(Item.objects.filter(name="Gin Tônica").exists())
+        self.assertEqual(len(result.skipped), 1)
+        skipped = result.skipped[0]
+        self.assertEqual(skipped.row, 8)  # header + 6 rows above it
+        self.assertEqual(skipped.name, "Gin Tônica")
+        self.assertIn("preço", skipped.reason)
+
+    def test_invalid_rows_are_skipped_with_reason(self):
+        rows = [
+            [None, "Sem categoria", None, 1, 10, None, None],
+            ["Drinks", None, None, 1, 10, None, None],
+            ["Drinks", "Preço negativo", None, 1, -1, None, None],
+            ["Drinks", "Preço texto", None, 1, "caro", None, None],
+            ["Drinks", "Estoque fracionado", None, 1.5, 10, None, None],
+            ["Drinks", "Estoque negativo", None, -2, 10, None, None],
+            ["Drinks", "Estoque vazio", None, None, "12,50", None, None],
+        ]
+        result = import_items(make_workbook(rows))
+
+        self.assertEqual([s.row for s in result.skipped], [2, 3, 4, 5, 6, 7])
+        self.assertEqual(result.items_created, 1)
+        ok = Item.objects.get(name="Estoque vazio")
+        self.assertEqual(ok.stock, 0)
+        self.assertEqual(ok.price, Decimal("12.50"))
+
+    def test_columns_are_found_by_header_name(self):
+        headers = [" cozinha? ", "PREÇO", "item", "Estoque", "CATEGORIA"]
+        import_items(make_workbook([["S", 9, "Guioza", 4, "Entradas"]], headers=headers))
+
+        item = Item.objects.get(name="Guioza")
+        self.assertEqual(item.category.name, "Entradas")
+        self.assertEqual(item.price, Decimal("9.00"))
+        self.assertEqual(item.stock, 4)
+        self.assertEqual(item.description, "")
+        self.assertTrue(item.requires_kitchen_preparation)
+
+    def test_missing_header_is_rejected_and_nothing_imported(self):
+        headers = ["Categoria", "Item", "Descrição", "Estoque", "Cozinha?"]
+        upload = make_workbook([["Teishoku", "Karague", "", 1, "S"]], headers=headers)
+
+        with self.assertRaisesMessage(SpreadsheetImportError, "Preço"):
+            import_items(upload)
+        self.assertFalse(Category.objects.exists())
+        self.assertFalse(Item.objects.exists())
+
+    def test_non_xlsx_file_is_rejected(self):
+        upload = SimpleUploadedFile("menu.xlsx", b"Categoria;Item\nTeishoku;Karague\n")
+
+        with self.assertRaisesMessage(SpreadsheetImportError, ".xlsx"):
+            import_items(upload)
+        self.assertFalse(Item.objects.exists())
+
+    def test_observacoes_column_is_ignored(self):
+        import_items(make_workbook(SAMPLE_ROWS))
+
+        self.assertFalse(NoteSuggestion.objects.exists())
+
+
+class ItemImportViewTests(TestCase):
+    """The upload page at /estoque/importar/ (#398)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user("admin", password="secret123")
+
+    def setUp(self):
+        Category.objects.all().delete()
+        self.client.force_login(self.user)
+        self.url = reverse("inventory:item-import")
+
+    def test_anonymous_is_redirected_to_login(self):
+        self.client.logout()
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("core:login"), resp["Location"])
+
+        resp = self.client.post(self.url, {"file": make_workbook(SAMPLE_ROWS)})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Item.objects.exists())
+
+    def test_item_list_links_to_import_page(self):
+        resp = self.client.get(reverse("inventory:item-list"))
+        self.assertContains(resp, "Importar planilha")
+        self.assertContains(resp, f'href="{self.url}"')
+
+    def test_get_shows_upload_form(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'type="file"')
+        self.assertContains(resp, 'enctype="multipart/form-data"')
+        self.assertContains(resp, ".xlsx")
+
+    def test_post_imports_and_shows_summary(self):
+        resp = self.client.post(self.url, {"file": make_workbook(SAMPLE_ROWS)})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Item.objects.count(), 5)
+        body = resp.content.decode()
+        self.assertIn("Importação concluída", body)
+        self.assertIn('data-testid="categories-created">5<', body)
+        self.assertIn('data-testid="items-created">5<', body)
+        self.assertIn('data-testid="items-updated">0<', body)
+        self.assertIn("Gin Tônica", body)
+        self.assertIn("preço ausente", body)
+
+        resp = self.client.post(self.url, {"file": make_workbook(SAMPLE_ROWS)})
+        self.assertContains(resp, 'data-testid="items-updated">5<')
+        self.assertEqual(Item.objects.count(), 5)
+
+    def test_missing_header_shows_error(self):
+        upload = make_workbook([["Teishoku", "Karague"]], headers=["Categoria", "Item"])
+        resp = self.client.post(self.url, {"file": upload})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "coluna(s) obrigatória(s)")
+        self.assertNotContains(resp, "Importação concluída")
+        self.assertFalse(Category.objects.exists())
+
+    def test_non_xlsx_upload_shows_error(self):
+        upload = SimpleUploadedFile("menu.csv", b"Categoria,Item\nTeishoku,Karague\n")
+        resp = self.client.post(self.url, {"file": upload})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Envie um arquivo no formato .xlsx")
+        self.assertFalse(Item.objects.exists())
+
+    def test_item_edit_form_shows_description(self):
+        category = Category.objects.create(name="Teishoku")
+        item = Item.objects.create(
+            name="Karague",
+            category=category,
+            price=Decimal("50"),
+            description="Frango empanado",
+        )
+        resp = self.client.get(reverse("inventory:item-update", args=[item.pk]))
+        self.assertContains(resp, "Descrição")
+        self.assertContains(resp, "Frango empanado")
+
+        resp = self.client.post(
+            reverse("inventory:item-update", args=[item.pk]),
+            {
+                "name": "Karague",
+                "category": category.pk,
+                "description": "Frango frito",
+                "price": "50",
+                "stock": "1",
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        item.refresh_from_db()
+        self.assertEqual(item.description, "Frango frito")
